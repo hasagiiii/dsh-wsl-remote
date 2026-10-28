@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WSL 运行环境",
+    "description": "像 VS Code Remote - WSL 一样，界面和模型留在 Windows，Agent 的命令、文件读写和搜索在 WSL 中执行。在通用设置中选择运行环境和默认 Shell，重启应用后生效。"
+  }
+}

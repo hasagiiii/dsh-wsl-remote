@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "WSL Execution Environment",
+    "description": "Like VS Code Remote - WSL: the UI and models stay on Windows while Agent commands, file edits and searches run inside WSL. Choose the environment and default shell in General settings; changes apply after a restart."
+  }
+}

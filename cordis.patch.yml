@@ -1,0 +1,72 @@
+# WSL execution environment for DeepSeek Harness (VS Code Remote - WSL style).
+#
+# GENERATED from patch.template.yml by scripts/build-patch.mjs; edit the template.
+#
+# The environment is fixed when DeepSeek Harness starts. ((globalThis.__dshWslRemote ??= (() => { try { if (process.platform !== 'win32') return {}; const fs = process.getBuiltinModule('node:fs'); const os = process.getBuiltinModule('node:os'); const path = process.getBuiltinModule('node:path'); const home = (process.env.DSH_HOME ?? '').trim() || path.join(os.homedir(), '.dsh'); const s = JSON.parse(fs.readFileSync(path.join(home, 'wsl-remote.json'), 'utf8')); const ok = (v) => typeof v === 'string' && /^[/][A-Za-z0-9._/+@-]{0,1023}$/.test(v); if (typeof s.environment !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(s.environment) || !ok(s.node) || !ok(s.serverDir)) return {}; const shell = s.shells && ok(s.shells[s.environment]) ? s.shells[s.environment] : undefined; return { active: s.environment, node: s.node, serverDir: s.serverDir, shell }; } catch { return {}; } })()).active || '') reads
+# <DSH home>/wsl-remote.json once per process and yields the selected
+# distribution, or '' for this Windows PC. In WSL mode the Host's shared
+# execution services (ctx.fs, ctx.subprocess, ctx.sandbox, ctx.shell) are the
+# WSL providers below, so every session runs commands, file edits and searches
+# inside Linux. Agent presets are unchanged. Settings → General rewrites the
+# file and asks for a restart.
+- insert:
+    - id: local-wsl-remote
+      name: '@local/dsh-wsl-remote'
+      config: {}
+
+    - id: local-wsl-connection
+      name: '@local/dsh-wsl-remote/connection'
+      disabled: !!js "!((globalThis.__dshWslRemote ??= (() => { try { if (process.platform !== 'win32') return {}; const fs = process.getBuiltinModule('node:fs'); const os = process.getBuiltinModule('node:os'); const path = process.getBuiltinModule('node:path'); const home = (process.env.DSH_HOME ?? '').trim() || path.join(os.homedir(), '.dsh'); const s = JSON.parse(fs.readFileSync(path.join(home, 'wsl-remote.json'), 'utf8')); const ok = (v) => typeof v === 'string' && /^[/][A-Za-z0-9._/+@-]{0,1023}$/.test(v); if (typeof s.environment !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(s.environment) || !ok(s.node) || !ok(s.serverDir)) return {}; const shell = s.shells && ok(s.shells[s.environment]) ? s.shells[s.environment] : undefined; return { active: s.environment, node: s.node, serverDir: s.serverDir, shell }; } catch { return {}; } })()).active || '')"
+      config:
+        distro: !!js "((globalThis.__dshWslRemote ??= (() => { try { if (process.platform !== 'win32') return {}; const fs = process.getBuiltinModule('node:fs'); const os = process.getBuiltinModule('node:os'); const path = process.getBuiltinModule('node:path'); const home = (process.env.DSH_HOME ?? '').trim() || path.join(os.homedir(), '.dsh'); const s = JSON.parse(fs.readFileSync(path.join(home, 'wsl-remote.json'), 'utf8')); const ok = (v) => typeof v === 'string' && /^[/][A-Za-z0-9._/+@-]{0,1023}$/.test(v); if (typeof s.environment !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(s.environment) || !ok(s.node) || !ok(s.serverDir)) return {}; const shell = s.shells && ok(s.shells[s.environment]) ? s.shells[s.environment] : undefined; return { active: s.environment, node: s.node, serverDir: s.serverDir, shell }; } catch { return {}; } })()).active || '') || 'unused'"
+        node: !!js "globalThis.__dshWslRemote.node"
+        serverDir: !!js "globalThis.__dshWslRemote.serverDir"
+        shell: !!js "globalThis.__dshWslRemote.shell"
+
+    - id: local-wsl-fs
+      name: '@local/dsh-wsl-remote/fs'
+      disabled: !!js "!((globalThis.__dshWslRemote ??= (() => { try { if (process.platform !== 'win32') return {}; const fs = process.getBuiltinModule('node:fs'); const os = process.getBuiltinModule('node:os'); const path = process.getBuiltinModule('node:path'); const home = (process.env.DSH_HOME ?? '').trim() || path.join(os.homedir(), '.dsh'); const s = JSON.parse(fs.readFileSync(path.join(home, 'wsl-remote.json'), 'utf8')); const ok = (v) => typeof v === 'string' && /^[/][A-Za-z0-9._/+@-]{0,1023}$/.test(v); if (typeof s.environment !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(s.environment) || !ok(s.node) || !ok(s.serverDir)) return {}; const shell = s.shells && ok(s.shells[s.environment]) ? s.shells[s.environment] : undefined; return { active: s.environment, node: s.node, serverDir: s.serverDir, shell }; } catch { return {}; } })()).active || '')"
+
+    - id: local-wsl-subprocess
+      name: '@local/dsh-wsl-remote/subprocess'
+      disabled: !!js "!((globalThis.__dshWslRemote ??= (() => { try { if (process.platform !== 'win32') return {}; const fs = process.getBuiltinModule('node:fs'); const os = process.getBuiltinModule('node:os'); const path = process.getBuiltinModule('node:path'); const home = (process.env.DSH_HOME ?? '').trim() || path.join(os.homedir(), '.dsh'); const s = JSON.parse(fs.readFileSync(path.join(home, 'wsl-remote.json'), 'utf8')); const ok = (v) => typeof v === 'string' && /^[/][A-Za-z0-9._/+@-]{0,1023}$/.test(v); if (typeof s.environment !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(s.environment) || !ok(s.node) || !ok(s.serverDir)) return {}; const shell = s.shells && ok(s.shells[s.environment]) ? s.shells[s.environment] : undefined; return { active: s.environment, node: s.node, serverDir: s.serverDir, shell }; } catch { return {}; } })()).active || '')"
+
+    - id: local-wsl-sandbox
+      name: '@local/dsh-wsl-remote/sandbox'
+      disabled: !!js "!((globalThis.__dshWslRemote ??= (() => { try { if (process.platform !== 'win32') return {}; const fs = process.getBuiltinModule('node:fs'); const os = process.getBuiltinModule('node:os'); const path = process.getBuiltinModule('node:path'); const home = (process.env.DSH_HOME ?? '').trim() || path.join(os.homedir(), '.dsh'); const s = JSON.parse(fs.readFileSync(path.join(home, 'wsl-remote.json'), 'utf8')); const ok = (v) => typeof v === 'string' && /^[/][A-Za-z0-9._/+@-]{0,1023}$/.test(v); if (typeof s.environment !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(s.environment) || !ok(s.node) || !ok(s.serverDir)) return {}; const shell = s.shells && ok(s.shells[s.environment]) ? s.shells[s.environment] : undefined; return { active: s.environment, node: s.node, serverDir: s.serverDir, shell }; } catch { return {}; } })()).active || '')"
+
+    - id: local-wsl-shell
+      name: '@local/dsh-wsl-remote/shell'
+      disabled: !!js "!((globalThis.__dshWslRemote ??= (() => { try { if (process.platform !== 'win32') return {}; const fs = process.getBuiltinModule('node:fs'); const os = process.getBuiltinModule('node:os'); const path = process.getBuiltinModule('node:path'); const home = (process.env.DSH_HOME ?? '').trim() || path.join(os.homedir(), '.dsh'); const s = JSON.parse(fs.readFileSync(path.join(home, 'wsl-remote.json'), 'utf8')); const ok = (v) => typeof v === 'string' && /^[/][A-Za-z0-9._/+@-]{0,1023}$/.test(v); if (typeof s.environment !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(s.environment) || !ok(s.node) || !ok(s.serverDir)) return {}; const shell = s.shells && ok(s.shells[s.environment]) ? s.shells[s.environment] : undefined; return { active: s.environment, node: s.node, serverDir: s.serverDir, shell }; } catch { return {}; } })()).active || '')"
+      config:
+        timeoutMs: 60000
+
+# The Linux `bash` tool joins every Agent's catalog from the Host; the Host
+# plugin hides each Agent's preset `pwsh` tool, whose commands would also run
+# in Linux.
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js "!((globalThis.__dshWslRemote ??= (() => { try { if (process.platform !== 'win32') return {}; const fs = process.getBuiltinModule('node:fs'); const os = process.getBuiltinModule('node:os'); const path = process.getBuiltinModule('node:path'); const home = (process.env.DSH_HOME ?? '').trim() || path.join(os.homedir(), '.dsh'); const s = JSON.parse(fs.readFileSync(path.join(home, 'wsl-remote.json'), 'utf8')); const ok = (v) => typeof v === 'string' && /^[/][A-Za-z0-9._/+@-]{0,1023}$/.test(v); if (typeof s.environment !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(s.environment) || !ok(s.node) || !ok(s.serverDir)) return {}; const shell = s.shells && ok(s.shells[s.environment]) ? s.shells[s.environment] : undefined; return { active: s.environment, node: s.node, serverDir: s.serverDir, shell }; } catch { return {}; } })()).active || '')"
+
+# Windows execution providers stand down while WSL is the environment.
+- id: subprocess
+  name: '@deepseek-ai/dsh-subprocess-local'
+  disabled: !!js "!!((globalThis.__dshWslRemote ??= (() => { try { if (process.platform !== 'win32') return {}; const fs = process.getBuiltinModule('node:fs'); const os = process.getBuiltinModule('node:os'); const path = process.getBuiltinModule('node:path'); const home = (process.env.DSH_HOME ?? '').trim() || path.join(os.homedir(), '.dsh'); const s = JSON.parse(fs.readFileSync(path.join(home, 'wsl-remote.json'), 'utf8')); const ok = (v) => typeof v === 'string' && /^[/][A-Za-z0-9._/+@-]{0,1023}$/.test(v); if (typeof s.environment !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(s.environment) || !ok(s.node) || !ok(s.serverDir)) return {}; const shell = s.shells && ok(s.shells[s.environment]) ? s.shells[s.environment] : undefined; return { active: s.environment, node: s.node, serverDir: s.serverDir, shell }; } catch { return {}; } })()).active || '')"
+
+- id: sandbox
+  name: '@deepseek-ai/dsh-sandbox-local'
+  disabled: !!js "!!((globalThis.__dshWslRemote ??= (() => { try { if (process.platform !== 'win32') return {}; const fs = process.getBuiltinModule('node:fs'); const os = process.getBuiltinModule('node:os'); const path = process.getBuiltinModule('node:path'); const home = (process.env.DSH_HOME ?? '').trim() || path.join(os.homedir(), '.dsh'); const s = JSON.parse(fs.readFileSync(path.join(home, 'wsl-remote.json'), 'utf8')); const ok = (v) => typeof v === 'string' && /^[/][A-Za-z0-9._/+@-]{0,1023}$/.test(v); if (typeof s.environment !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(s.environment) || !ok(s.node) || !ok(s.serverDir)) return {}; const shell = s.shells && ok(s.shells[s.environment]) ? s.shells[s.environment] : undefined; return { active: s.environment, node: s.node, serverDir: s.serverDir, shell }; } catch { return {}; } })()).active || '')"
+
+- id: pwsh-sandbox
+  name: '@deepseek-ai/dsh-pwsh-sandbox'
+  disabled: !!js "process.platform !== 'win32' || !!((globalThis.__dshWslRemote ??= (() => { try { if (process.platform !== 'win32') return {}; const fs = process.getBuiltinModule('node:fs'); const os = process.getBuiltinModule('node:os'); const path = process.getBuiltinModule('node:path'); const home = (process.env.DSH_HOME ?? '').trim() || path.join(os.homedir(), '.dsh'); const s = JSON.parse(fs.readFileSync(path.join(home, 'wsl-remote.json'), 'utf8')); const ok = (v) => typeof v === 'string' && /^[/][A-Za-z0-9._/+@-]{0,1023}$/.test(v); if (typeof s.environment !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(s.environment) || !ok(s.node) || !ok(s.serverDir)) return {}; const shell = s.shells && ok(s.shells[s.environment]) ? s.shells[s.environment] : undefined; return { active: s.environment, node: s.node, serverDir: s.serverDir, shell }; } catch { return {}; } })()).active || '')"
+
+- id: fs-sandbox
+  name: '@deepseek-ai/dsh-fs-sandbox'
+  disabled: !!js "!!((globalThis.__dshWslRemote ??= (() => { try { if (process.platform !== 'win32') return {}; const fs = process.getBuiltinModule('node:fs'); const os = process.getBuiltinModule('node:os'); const path = process.getBuiltinModule('node:path'); const home = (process.env.DSH_HOME ?? '').trim() || path.join(os.homedir(), '.dsh'); const s = JSON.parse(fs.readFileSync(path.join(home, 'wsl-remote.json'), 'utf8')); const ok = (v) => typeof v === 'string' && /^[/][A-Za-z0-9._/+@-]{0,1023}$/.test(v); if (typeof s.environment !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(s.environment) || !ok(s.node) || !ok(s.serverDir)) return {}; const shell = s.shells && ok(s.shells[s.environment]) ? s.shells[s.environment] : undefined; return { active: s.environment, node: s.node, serverDir: s.serverDir, shell }; } catch { return {}; } })()).active || '')"
+
+# Programmatic tool calls and workflows start their Node worker inside WSL.
+- id: ptc-runtime
+  name: '@deepseek-ai/dsh-ptc-runtime-node'
+  config:
+    launch: !!js "((globalThis.__dshWslRemote ??= (() => { try { if (process.platform !== 'win32') return {}; const fs = process.getBuiltinModule('node:fs'); const os = process.getBuiltinModule('node:os'); const path = process.getBuiltinModule('node:path'); const home = (process.env.DSH_HOME ?? '').trim() || path.join(os.homedir(), '.dsh'); const s = JSON.parse(fs.readFileSync(path.join(home, 'wsl-remote.json'), 'utf8')); const ok = (v) => typeof v === 'string' && /^[/][A-Za-z0-9._/+@-]{0,1023}$/.test(v); if (typeof s.environment !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(s.environment) || !ok(s.node) || !ok(s.serverDir)) return {}; const shell = s.shells && ok(s.shells[s.environment]) ? s.shells[s.environment] : undefined; return { active: s.environment, node: s.node, serverDir: s.serverDir, shell }; } catch { return {}; } })()).active || '') ? { kind: 'node-script', executable: globalThis.__dshWslRemote.node, bootstrapPath: globalThis.__dshWslRemote.serverDir + '/ptc/process.js' } : undefined"
