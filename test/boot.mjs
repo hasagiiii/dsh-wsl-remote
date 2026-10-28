@@ -7,7 +7,7 @@ import { join } from 'node:path';
 const patch = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8');
 const rows = [];
 let current;
-for (const line of patch.split('\n')) {
+for (const line of patch.split(/\r?\n/)) {
   const id = /^\s*-\s+id:\s+(\S+)/.exec(line);
   if (id) rows.push((current = { id: id[1] }));
   const disabled = /^\s+disabled:\s+!!js "(.*)"$/.exec(line);
