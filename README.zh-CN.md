@@ -2,66 +2,79 @@
 
 [English](README.md) | 简体中文
 
-让 Agent 的命令、文件编辑和搜索在 WSL 中执行，而 DeepSeek Harness 本身仍留在 Windows 上——与 VS Code Remote - WSL 的分工方式相同。
+DeepSeek Harness 的 WSL 远程连接，方案与 Codex 桌面版的「WSL remote connections」相同：每个 WSL 2 发行版是一台独立的远程主机，与本机 Windows 并存。连接时在 WSL 中启动**你自己安装的 `dsh`**，它使用 WSL 自己的 `~/.dsh` 配置、会话、插件和原生 ext4 文件。无需重启，也不替换 Windows Host 的任何部分。
 
-| 留在 Windows | 在 WSL 中运行（WSL 模式下） |
-|---|---|
-| 桌面界面、模型调用、凭据 | 命令工具（`bash`，即你选择的 Linux Shell） |
-| 会话日志、审批、权限 | `read` / `write` / `edit`、`glob` / `grep` |
-| 插件、设置、Agent 预设 | Workflow / PTC 工作进程、文件效果沙箱（bubblewrap） |
+| | 本机 Windows | `WSL: <发行版>` 连接 |
+|---|---|---|
+| 程序 | DeepSeek Harness 桌面版 | 你在 WSL 中安装的 `dsh`（`npm i -g @deepseek-ai/dsh`） |
+| 主目录、会话、插件、`AGENTS.md` | `%USERPROFILE%\.dsh` | WSL 的 `~/.dsh` |
+| 文件和 Shell | Windows、PowerShell | Linux、你的登录 Shell |
+| 登录 | Windows 凭据存储 | **与 Windows 共享**（默认），或独立登录 |
+| 打开位置 | 应用本身 | 右侧边栏浏览器标签页，或系统浏览器 |
 
 ## 使用
 
-设置 → 通用：
+打开 设置 → 通用 → **WSL 远程连接**：
 
-1. **运行环境** —— `本机 Windows` 或 `WSL · <发行版>`。选择发行版时会先准备其 Linux 运行时（`~/.dsh-wsl-remote/server/<version>`，执行一次 `npm install`），然后保存选择并提示你**重启 DeepSeek Harness**。运行环境在应用启动时确定，对整个应用生效；重启后的所有会话都会使用它。
-2. **默认 Shell** —— 该发行版 `/etc/shells` 中的任意 Shell（默认 `bash`）。同样在重启后生效。
+1. 在 `WSL: <发行版>` 旁点**连接**。首次连接会把一个小型 agent 复制到 `~/.dsh-wsl-remote/agent/<version>`，在登录 PATH 上检查 `dsh --version`（与 Codex 的版本检查相同），然后通过 `wsl.exe` 启动 `dsh --profile web`。
+2. 点**在侧边栏打开**或**在浏览器打开**。WSL 中 dsh 的界面通过 Windows 本机回环中继加载，地址为 `http://127.0.0.1:<端口>`。每个发行版的端口固定不变，所以重连后 WSL dsh 的浏览器 Cookie 仍然有效。
+3. 已连接的发行版会在 DeepSeek Harness 启动时自动重连。点**断开**会停止 WSL 中的 dsh。
 
-Agent 预设不会被修改。在 WSL 模式下，每个 Agent 都会获得 Linux `bash` 工具，其 `pwsh` 工具则被隐藏。
+另外两项设置对新连接生效：
 
-发行版内的要求：WSL 2、登录 PATH 中可用的 Node.js 22+（支持 nvm），以及用于受限权限模式的 `bwrap`。
+- **共享登录状态**（默认开启）：见下文。
+- **WSL 中的 dsh 配置**：要启动的 profile（默认 `web`）。
+
+发行版内的要求：WSL 2，以及登录 Shell 的 PATH 上有 0.2.1-rc.2 或更高版本的 `dsh`（支持 nvm）。
+
+## 共享登录状态
+
+Codex 没有内置在 Windows 和 WSL 之间共享登录的办法，两边都要登录一次。这里可以共享，因为两边用的是同一个凭据接口（`ctx.credentials`）。
+
+开启共享后，WSL dsh 内的 agent 会通过 `wsl.exe` 管道，把每一次凭据读写都交给 Windows 的凭据存储处理：
+
+- API Key（`DEEPSEEK_API_KEY` 等）
+- DeepSeek 账号登录（`deepseek-account-platform/*`）
+- 其他插件的凭据记录
+
+WSL 中的每次 `modifyRecord` 都在 Windows 凭据存储的 `modifyRecord` 内部执行，处于它的跨进程写锁之下。因此 WSL 里的令牌刷新和 Windows 上的刷新不会互相覆盖或作废，而复制凭据文件正是会出这个问题。在任意一边登录、退出或修改 Key，两边同时生效。Windows 上的变更事件会转发给 WSL。
+
+只有一条记录 WSL dsh 自己保留：`client-connection/browser-session`，它是签发 WSL dsh 自身浏览器 Cookie 的密钥。关闭共享后，WSL dsh 使用自己的 `~/.dsh/.credentials.yaml`，需要在那里单独登录。
 
 ## 工作原理
 
-- `cordis.patch.yml`（由 `scripts/build-patch.mjs` 根据 `patch.template.yml` 生成）—— 启动时，每一行的 `!!js` 条件会读取一次 `<DSH home>/wsl-remote.json`；在 WSL 模式下，Windows 的 `subprocess`、`sandbox`、`pwsh-sandbox` 和 `fs-sandbox` 行停用，由 WSL 行提供相同的 Host 服务。
-- `lib/connection.js` —— 通过 `wsl.exe` 的标准输入输出（而非 OpenSSH）实现 `ctx.ssh` 契约；首次使用时启动，下次使用时自动重连，空闲 15 分钟后关闭。
-- `lib/vendor/*` —— DeepSeek Harness 自带的 `dsh-fs-ssh`、`dsh-subprocess-ssh`、`dsh-sandbox-ssh` 提供者（0.2.1-rc.3，MIT），除导入路径外未作修改。
-- `server/helper/*` —— 来自 `@deepseek-ai/dsh-ssh` 的 DeepSeek Harness POSIX 执行辅助程序（未修改）；`server/ptc/process.js` —— `dsh-ptc-runtime-node` 工作进程；`server/bridge.mjs` 一次性解析登录 Shell 环境，启动辅助程序，在本地对其 TLS-PSK 流套接字进行认证，并将所有流量复用到同一条管道上。不监听任何网络端口。
-- `lib/providers.js` —— 将 Windows 写法（`\\wsl.localhost\<distro>\…`、`C:\…`、打包的 `rg.exe`）转换为对应的 Linux 写法。
+```text
+Windows Host（本插件）                          WSL 发行版
+  RemoteConnection ── wsl.exe 标准输入输出 ───▶ launch.sh → $SHELL -ilc 'dsh --patch overlay.yml --profile web'
+    mux 通道 0：JSON（hello、credentials/*） ◀──▶  agent.mjs（Cordis 插件，fd 3/4）
+    mux 通道 n：中继的 TCP  ◀── 127.0.0.1:端口    ──▶ 127.0.0.1:<dsh web 端口>
+```
+
+- `lib/remote.js`：一个连接，负责部署、版本检查、启动、本机回环中继、应答凭据请求，以及带退避的自动重连。
+- `server/launch.sh`：通过登录 Shell 找到 `dsh`，并把管道移到 fd 3/4，dsh 自己的 stdout 不会碰到它。
+- `server/agent.mjs`：不需要任何 import 的 Cordis 插件，通过 `dsh --patch` 加载，只有被 Windows Host 启动时才会运行。
+- `lib/mux.js`：带流量窗口的多路复用器，两边共用。
+
+WSL 一侧不打开任何非回环端口，中继只监听 Windows 本机回环地址，WSL dsh 仍然要求它自己的启动令牌和 Cookie。
+
+## 从 2.x 迁移
+
+2.x 是启动时生效的「运行环境」模式，会把本机 Host 的执行组件换成 WSL 的。3.0 首次启动时会把 `wsl-remote.json` 改写为新格式，Windows 的执行组件随之恢复，这与 Codex 迁移后把 `runCodexInWsl` 改回 false 的做法相同。2.x 期间创建的会话仍保留在 Windows 的会话列表中。
 
 ## 限制
 
-- 在 WSL 模式下，交互式终端标签页和右侧边栏的文件视图也使用 WSL 提供者；其中不支持文件监视（与 DSH 的 SSH 提供者相同），因此视图按需刷新。
-- WSL 连接断开时，其承载的操作会失败，且不会重放。下一次操作会自动重连。
-- 固定适配 DeepSeek Harness 0.2.1-rc.3（`engines.dsh`）；DSH 升级时需要同步更新内置的提供者。
-
-## 安装
-
-```text
-git clone https://github.com/hasagiiii/dsh-wsl-remote.git
-```
-
-将克隆下来的目录作为 bundle 安装到你的 DeepSeek Harness 配置中（例如让 Agent 执行 `plugin_manager install_bundle <绝对路径>` 进行安装），然后打开 设置 → 通用。
-
-如需在不使用界面的情况下切换回 Windows，删除 `%USERPROFILE%\.dsh\wsl-remote.json`（或 `$DSH_HOME\wsl-remote.json`）后重启即可。
+- WSL 连接是一个独立的 dsh，有自己的界面。它的会话不会出现在 Windows 的会话列表里，这与 Codex 中独立主机的表现一致。
+- 右侧边栏浏览器是受沙箱限制的 iframe 或 webview。如果 WSL 界面需要它不提供的能力，请改用**在浏览器打开**。
+- 面向模型的工具在会话所在的一侧运行。Windows 会话不能通过本插件在 WSL 中执行命令。
 
 ## 开发
 
-`cordis.patch.yml` 是生成文件；请修改 `patch.template.yml` 或 `lib/boot.js`，然后运行：
-
-```text
-node scripts/build-patch.mjs
-```
-
-测试使用 DeepSeek Harness 的 Electron 可执行文件作为 Node 运行，以便插件解析已安装的 DSH 包（`DSH_ROOT` 可覆盖默认路径 `D:/ds_harness/resources/app.asar/dsh`）。`WSL_DISTRO` 用于选择发行版（默认 `Ubuntu`）。
-
 ```powershell
-node test/boot.mjs                       # 启动时的环境选择，无需 WSL
 $env:ELECTRON_RUN_AS_NODE = '1'
-$dsh = 'D:\ds_harness\DeepSeek Harness.exe'
-& $dsh --import ./test/resolve-dsh.mjs test/deploy.mjs   # 部署 Linux 运行时
-& $dsh --import ./test/resolve-dsh.mjs test/shell.mjs    # Shell、沙箱模式、PTC、默认 Shell
-& $dsh --import ./test/resolve-dsh.mjs test/e2e.mjs      # 文件、沙箱、ripgrep、PTY
+$dsh = 'D:\dsh\DeepSeek Harness.exe'
+& $dsh test/unit.mjs                                           # 协议、迁移、共享凭据的加锁行为
+$env:WSL_DISTRO = 'Ubuntu-26.04'
+& $dsh --import ./test/stub-cordis.mjs test/remote.mjs        # 真实 WSL：部署、启动、中继、共享读取
 ```
 
-每当 `server/` 或 `lib/mux.js` 下的任何内容发生变化时，请递增 `lib/deploy.js` 中的 `SERVER_VERSION`，以便各发行版获取新的运行时。
+每当 `server/` 或 `lib/mux.js` 发生变化时，请递增 `lib/remote.js` 中的 `AGENT_VERSION`，以便各发行版获取新的 agent。

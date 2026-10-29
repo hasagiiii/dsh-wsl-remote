@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "WSL 运行环境",
-    "description": "像 VS Code Remote - WSL 一样，界面和模型留在 Windows，Agent 的命令、文件读写和搜索在 WSL 中执行。在通用设置中选择运行环境和默认 Shell，重启应用后生效。"
+    "title": "WSL 远程连接",
+    "description": "与 Codex 的 WSL 远程连接相同：每个 WSL 发行版运行你自己安装的 dsh，与本机 Windows 并存，拥有独立的会话、插件和原生 Linux 文件，通过 wsl.exe 连接，可选共享 Windows 登录状态。在通用设置中连接，无需重启。"
   }
 }

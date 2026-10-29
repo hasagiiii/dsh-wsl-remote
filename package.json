@@ -1,48 +1,31 @@
 {
   "name": "@local/dsh-wsl-remote",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
-  "description": "Run Agent commands, file edits and searches inside WSL while DeepSeek Harness stays on Windows, like VS Code Remote - WSL. The environment is chosen at startup.",
+  "description": "WSL remote connections for DeepSeek Harness, like the Codex desktop app: each WSL distribution runs its own dsh beside the Windows one, reached through wsl.exe stdio, optionally sharing the Windows sign-in.",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/hasagiiii/dsh-wsl-remote.git"
   },
   "scripts": {
-    "build:patch": "node scripts/build-patch.mjs",
-    "test:boot": "node test/boot.mjs"
+    "test": "node test/unit.mjs",
+    "test:remote": "node test/remote.mjs"
   },
   "engines": {
     "dsh": ">=0.2.1-rc.3 <0.2.2-0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.5",
-    "@deepseek-ai/schemastery": "~3.18.5",
-    "@deepseek-ai/dsh-bash-sandbox": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-fs": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-sandbox": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-subprocess": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-subprocess-local": "0.2.1-rc.3",
-    "zod": "4.4.3"
+    "@deepseek-ai/schemastery": "~3.18.5"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": { "optional": true },
-    "@deepseek-ai/schemastery": { "optional": true },
-    "@deepseek-ai/dsh-bash-sandbox": { "optional": true },
-    "@deepseek-ai/dsh-fs": { "optional": true },
-    "@deepseek-ai/dsh-sandbox": { "optional": true },
-    "@deepseek-ai/dsh-subprocess": { "optional": true },
-    "@deepseek-ai/dsh-subprocess-local": { "optional": true },
-    "zod": { "optional": true }
+    "@deepseek-ai/schemastery": { "optional": true }
   },
   "exports": {
     ".": "./index.js",
-    "./connection": "./connection.js",
-    "./fs": "./fs.js",
-    "./subprocess": "./subprocess.js",
-    "./sandbox": "./sandbox.js",
-    "./shell": "./shell.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
@@ -50,19 +33,11 @@
   },
   "files": [
     "index.js",
-    "connection.js",
-    "fs.js",
-    "subprocess.js",
-    "sandbox.js",
-    "shell.js",
     "client.js",
     "lib/**/*.js",
-    "server/package.json",
-    "server/bridge.mjs",
-    "server/helper/*",
-    "server/ptc/*",
+    "server/agent.mjs",
+    "server/launch.sh",
     "cordis.patch.yml",
-    "patch.template.yml",
     "locale/*.json",
     "icon.svg",
     "README.md",

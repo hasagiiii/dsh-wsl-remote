@@ -1,23 +1,27 @@
 /**
- * @local/dsh-wsl-remote — Host half.
+ * @local/dsh-wsl-remote — WSL remote connections (Host half).
  *
- * The execution environment (this Windows PC or one WSL distribution) is fixed
- * when DeepSeek Harness starts; the bundle patch mounts the matching execution
- * providers. This plugin:
- *  - reports the running environment and the one saved for the next start;
- *  - deploys the Linux runtime before a distribution can be selected;
- *  - saves the environment and per-distribution default shell from
- *    Settings → General (user-only actions), which take effect after a restart;
- *  - in WSL mode, gives every Agent the Linux `bash` tool in place of `pwsh`
- *    and one stable prompt section naming the execution world.
+ * Modelled on the Codex desktop app's "WSL remote connections": every WSL 2
+ * distribution is a separate remote host next to this Windows Host, instead
+ * of one application-wide switch that needs a restart.
+ *  - Connecting starts the user's own `dsh` inside the distribution through
+ *    the stdio of `wsl.exe` (no port opened by WSL); it uses the WSL
+ *    `~/.dsh` profile, sessions, plugins and native ext4 files.
+ *  - Its Web UI is relayed to a stable Windows loopback port and opens in the
+ *    right sidebar or the system browser.
+ *  - Sign-in can be shared: the WSL dsh then reads and writes credentials,
+ *    including DeepSeek sign-in and token refreshes, in the Windows store
+ *    under its writer lock. Turned off, each side signs in on its own.
+ * Sessions stay where they started; nothing on this Host is replaced.
  */
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Service } from '@deepseek-ai/cordis';
 import schema from '@deepseek-ai/schemastery';
 import { listDistros } from './lib/wsl.js';
-import { ensureServer, probeDistro, SERVER_VERSION } from './lib/deploy.js';
-import { isDistro, isLinuxPath, readState, startupState, writeState } from './lib/boot.js';
+import { RemoteConnection } from './lib/remote.js';
+import { MIN_DSH_VERSION } from './lib/version.js';
+import { isDistro, isProfile, loadSettings, writeSettings } from './lib/state.js';
 
 const packageDir = dirname(fileURLToPath(import.meta.url));
 const ROUTE = '/api/local-wsl-remote';
@@ -38,82 +42,93 @@ async function body(request) {
   }
 }
 
-function environmentSection(distro, shell) {
-  return [
-    `Execution environment: commands, file reads and edits, and searches run inside the WSL Linux distribution "${distro}", not on Windows.`,
-    `The bash tool runs \`${shell} -c\`; use Linux commands and POSIX paths in commands.`,
-    `Windows paths of this distribution such as \\\\wsl.localhost\\${distro}\\home\\me\\repo name the Linux path /home/me/repo, and drive paths such as C:\\work are /mnt/c/work. File tools accept either spelling; inside commands use the Linux spelling.`,
-  ].join(' ');
-}
-
 export default class WslRemoteService extends Service {
-  static Config = schema.object({
-    // Retired 1.0 field, read once to migrate into wsl-remote.json.
-    defaultShells: schema.dict(schema.string()).default({}).volatile(),
-  });
+  static Config = schema.object({});
 
   constructor(ctx, config) {
     super(ctx, 'wslRemote');
     this.config = config;
-    this.started = startupState();
+    const { settings, migrated } = loadSettings();
+    this.settings = settings;
+    this.migrated = migrated;
+    if (migrated) ctx.logger.info('wsl-remote: retired the startup execution-environment mode; WSL distributions are now remote connections');
     this.distros = [];
-    this.probes = new Map();
-    this.operation = Promise.resolve();
+    this.connections = new Map();
     this.ready = this.discover().catch((error) => {
       ctx.logger.warn(`wsl-remote: WSL discovery failed: ${error.message}`);
     });
 
     ctx.inject(['settings'], (scope) => {
       scope.effect(() => scope.settings.configure({ auto: false }, ctx.fiber), 'wsl-remote: no generated settings page');
-      this.settingsService = scope.settings;
     });
 
-    if (this.started.active) this.installWslMode();
+    ctx.effect(() => () => {
+      for (const connection of this.connections.values()) connection.disconnect().catch(() => {});
+      this.connections.clear();
+    }, 'wsl-remote: connections');
+
+    this.ready.then(() => {
+      for (const distro of this.settings.autoConnect) {
+        if (this.distros.some((entry) => entry.name === distro)) this.connection(distro).connect().catch(() => {});
+      }
+    });
 
     ctx.inject(['tools'], (scope) => {
       scope.tools.register({
-        name: 'wsl_environments',
-        description: 'Report the execution environment this DeepSeek Harness process runs Agent commands in (Windows or a WSL distribution), the one saved for the next start, and installed WSL distributions. With `distro`, also probe that distribution for shells, Node.js and bubblewrap (this starts it if stopped). Read-only.',
-        parameters: {
-          type: 'object',
-          properties: { distro: { type: 'string', description: 'WSL distribution to probe.' } },
-          additionalProperties: false,
-        },
+        name: 'wsl_remote_connections',
+        description: 'List WSL remote connections: each WSL 2 distribution can run its own DeepSeek Harness (the user\'s WSL `dsh`, with its own sessions, plugins and Linux files) beside this Windows one. Reports connection state, the WSL dsh version and whether sign-in is shared with Windows. Read-only; connecting is a user action in Settings → General.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
         output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }] },
         isConcurrencySafe: () => true,
-        execute: async (args, exec) => {
-          const result = await this.environments();
-          if (typeof args?.distro === 'string') result.probe = await this.shellsOf(args.distro, exec.signal);
-          return result;
-        },
+        execute: async () => this.status(),
       });
     });
 
     ctx.inject(['connection'], (scope) => {
-      const route = (path, methods, handler) => scope.connection.fetch.register({ path: `${ROUTE}/${path}`, methods, requestBody: 'buffered', fetch: handler });
-      route('environments', ['GET'], async () => json(await this.environments()));
-      route('shells', ['GET'], async (request) => {
-        try {
-          return json(await this.shellsOf(new URL(request.url).searchParams.get('distro'), request.signal));
-        } catch (error) {
-          return json({ error: error.message }, 400);
-        }
+      const route = (path, methods, handler) => scope.connection.fetch.register({
+        path: `${ROUTE}/${path}`,
+        methods,
+        requestBody: 'buffered',
+        fetch: async (request) => {
+          try {
+            return json(await handler(request));
+          } catch (error) {
+            return json({ error: error.message }, 400);
+          }
+        },
       });
-      route('select', ['POST'], async (request) => {
-        const { environment } = await body(request);
-        try {
-          return json(await this.select(environment, request.signal));
-        } catch (error) {
-          return json({ error: error.message }, 400);
-        }
+      route('connections', ['GET'], () => this.status());
+      route('connect', ['POST'], async (request) => {
+        const { distro } = await body(request);
+        await this.known(distro);
+        this.remember(distro, true);
+        await this.connection(distro).connect().catch(() => {});
+        return this.status();
       });
-      route('shell', ['POST'], async (request) => {
-        const { distro, shell } = await body(request);
-        try {
-          return json(await this.setShell(distro, shell, request.signal));
-        } catch (error) {
-          return json({ error: error.message }, 400);
+      route('disconnect', ['POST'], async (request) => {
+        const { distro } = await body(request);
+        await this.known(distro);
+        this.remember(distro, false);
+        await this.connections.get(distro)?.disconnect();
+        return this.status();
+      });
+      route('open', ['POST'], async (request) => {
+        const { distro } = await body(request);
+        await this.known(distro);
+        const url = this.connections.get(distro)?.openUrl();
+        if (url === undefined) throw new Error(`${distro} is not connected`);
+        return { url };
+      });
+      route('settings', ['POST'], async (request) => {
+        const { shareLogin, profile } = await body(request);
+        const next = { ...this.settings };
+        if (typeof shareLogin === 'boolean') next.shareLogin = shareLogin;
+        if (profile !== undefined) {
+          if (!isProfile(profile)) throw new Error('Profile names use letters, digits, ".", "_" and "-"');
+          next.profile = profile;
         }
+        this.save(next);
+        return this.status();
       });
     });
   }
@@ -123,180 +138,61 @@ export default class WslRemoteService extends Service {
     this.distros = await listDistros();
   }
 
-  /** WSL mode: the Linux `bash` tool replaces `pwsh` for every Agent, plus one prompt section. */
-  installWslMode() {
-    const { active, shell } = this.started;
-    this.ctx.inject(['systemPrompt'], (scope) => {
-      scope.systemPrompt.section({
-        name: 'wsl-remote:environment',
-        order: scope.systemPrompt.getSectionOrder('TOOL_BASH') - 1,
-        text: environmentSection(active, shell ?? 'bash'),
-        interpolate: false,
-      });
-    });
-    const restrictions = new Map();
-    this.ctx.effect(() => () => {
-      for (const dispose of restrictions.values()) dispose();
-      restrictions.clear();
-    }, 'wsl-remote: per-agent pwsh restrictions');
-    this.ctx.on('agent/created', ({ agent }) => {
-      const tools = agent.ctx.get('tools');
-      if (tools === undefined || tools.get('pwsh', agent) === undefined || tools.get('bash', agent) === undefined) return;
-      try {
-        const dispose = tools.restrict({ deny: ['pwsh'] });
-        restrictions.set(agent, dispose);
-        agent.ctx.effect(() => () => {
-          if (restrictions.get(agent) === dispose) restrictions.delete(agent);
-        }, 'wsl-remote: pwsh restriction');
-      } catch (error) {
-        this.ctx.logger.warn(`wsl-remote: could not hide pwsh for ${agent.id}: ${error.message}`);
-      }
-    });
+  save(next) {
+    this.settings = writeSettings(next);
   }
 
-  /**
-   * Move 1.0 settings into wsl-remote.json and clear what 1.0 left in the
-   * profile: a default pointing at a removed `wsl-*` preset would make new
-   * sessions fail. Each step is independent; failures are reported, not thrown.
-   * @returns problems that remain, for the status report.
-   */
-  async migrate(settings) {
-    const problems = [];
-    const step = async (name, action) => {
-      try {
-        await action();
-      } catch (error) {
-        problems.push(`${name}: ${error.message}`);
-        this.ctx.logger.warn(`wsl-remote: migration ${name} failed: ${error.message}`);
-      }
-    };
-    const forms = () => settings.describe();
-    await step('agent preset default', async () => {
-      const form = forms().find((entry) => entry.ns === 'agent-preset-registry');
-      const selected = form?.value?.selectedDefault;
-      if (typeof selected === 'string' && selected.startsWith('wsl-')) {
-        await settings.mutate('agent-preset-registry', [{ op: 'unset', path: ['selectedDefault'] }], form.revision);
-      }
-    });
-    await step('default shells', async () => {
-      const form = forms().find((entry) => entry.ns === 'local-wsl-remote');
-      const legacy = form?.value?.defaultShells;
-      if (legacy === null || typeof legacy !== 'object' || Object.keys(legacy).length === 0) return;
-      const state = readState();
-      for (const [distro, path] of Object.entries(legacy)) if (isDistro(distro) && isLinuxPath(path) && !state.shells[distro]) state.shells[distro] = path;
-      writeState(state);
-      await settings.mutate('local-wsl-remote', [{ op: 'unset', path: ['defaultShells'] }], form.revision);
-    });
-    return problems;
+  remember(distro, connect) {
+    const set = new Set(this.settings.autoConnect);
+    if (connect) set.add(distro);
+    else set.delete(distro);
+    this.save({ ...this.settings, autoConnect: [...set] });
   }
 
-  /**
-   * Run the 1.0 migration once, from a request context: settings writes
-   * reconcile the Loader through HMR, which cannot nest inside the transaction
-   * that activated this plugin.
-   */
-  ensureMigrated() {
-    if (this.migration === undefined && this.settingsService !== undefined) {
-      this.migration = this.migrate(this.settingsService);
-      this.migration.then((problems) => {
-        if (problems.length > 0) this.migration = undefined;
-      });
-    }
-    return this.migration ?? Promise.resolve([]);
-  }
-
-  /** Running environment, saved environment, and installed distributions. */
-  async environments() {
+  async known(distro) {
     await this.ready;
-    const migrationProblems = await this.ensureMigrated();
-    const saved = readState();
-    const next = saved.environment && saved.node && saved.serverDir ? saved.environment : '';
-    const nextShell = next ? saved.shells[next] ?? null : null;
-    const activeShell = this.started.active ? this.started.shell ?? null : null;
-    return {
-      platform: process.platform,
-      serverVersion: SERVER_VERSION,
-      active: this.started.active,
-      activeShell,
-      next,
-      shells: saved.shells,
-      restartRequired: next !== this.started.active || (next !== '' && nextShell !== activeShell),
-      ...(migrationProblems.length ? { migrationProblems } : {}),
-      distros: this.distros.map((entry) => ({ name: entry.name, isDefault: entry.isDefault })),
-    };
-  }
-
-  knownDistro(distro) {
     if (!isDistro(distro) || !this.distros.some((entry) => entry.name === distro)) throw new Error(`Unknown WSL distribution: ${String(distro)}`);
   }
 
-  probe(distro, signal) {
-    let pending = this.probes.get(distro);
-    if (pending === undefined) {
-      pending = probeDistro(distro, signal);
-      this.probes.set(distro, pending);
-      pending.catch(() => this.probes.delete(distro));
+  connection(distro) {
+    let connection = this.connections.get(distro);
+    if (connection === undefined) {
+      connection = new RemoteConnection({
+        distro,
+        packageDir,
+        logger: this.ctx.logger,
+        settings: () => this.settings,
+        rememberPort: (name, port) => this.save({ ...this.settings, ports: { ...this.settings.ports, [name]: port } }),
+        credentials: () => this.ctx.get('credentials'),
+        onCredentialEvents: (onRecord, onRef) => {
+          const offRecord = this.ctx.on('credentials/record-updated', onRecord);
+          const offRef = this.ctx.on('credentials/reference-updated', onRef);
+          return () => {
+            offRecord();
+            offRef();
+          };
+        },
+      });
+      this.connections.set(distro, connection);
     }
-    return pending;
+    return connection;
   }
 
-  /** Installed shells in one distribution with the saved selection. */
-  async shellsOf(distro, signal) {
+  /** Everything the Settings rows and the model tool show (never a token). */
+  async status() {
     await this.ready;
-    this.knownDistro(distro);
-    const facts = await this.probe(distro, signal);
     return {
-      distro,
-      shells: facts.shells,
-      loginShell: facts.loginShell,
-      selected: readState().shells[distro] ?? null,
-      node: facts.nodeVersion ?? null,
-      nodeSupported: facts.nodeSupported,
-      bwrap: facts.bwrap,
+      platform: process.platform,
+      minimumDsh: MIN_DSH_VERSION,
+      shareLogin: this.settings.shareLogin,
+      profile: this.settings.profile,
+      credentialsAvailable: this.ctx.get('credentials') !== undefined,
+      ...(this.migrated ? { migratedFromStartupMode: true } : {}),
+      distros: this.distros.map((entry) => ({
+        isDefault: entry.isDefault,
+        autoConnect: this.settings.autoConnect.includes(entry.name),
+        ...(this.connections.get(entry.name)?.snapshot() ?? { name: entry.name, state: 'disconnected' }),
+      })),
     };
-  }
-
-  /** Serialize writes to wsl-remote.json. */
-  exclusive(task) {
-    const run = this.operation.then(task, task);
-    this.operation = run.catch(() => {});
-    return run;
-  }
-
-  /**
-   * Save the environment for the next start. A WSL distribution is saved only
-   * after its runtime is deployed, so the next start never lacks it.
-   */
-  select(environment, signal) {
-    return this.exclusive(async () => {
-      await this.ready;
-      const state = readState();
-      if (environment === '' || environment === null || environment === undefined) {
-        writeState({ ...state, environment: '' });
-      } else {
-        this.knownDistro(environment);
-        const facts = await this.probe(environment, signal);
-        const { dir } = await ensureServer(packageDir, environment, facts, signal, (line) => this.ctx.logger.info(`wsl-remote: ${line}`));
-        writeState({ ...state, environment, node: facts.node, serverDir: dir });
-      }
-      return this.environments();
-    });
-  }
-
-  /** Save one distribution's default shell ('' or null restores bash). */
-  setShell(distro, shell, signal) {
-    return this.exclusive(async () => {
-      await this.ready;
-      this.knownDistro(distro);
-      const state = readState();
-      if (shell === '' || shell === null || shell === undefined) delete state.shells[distro];
-      else {
-        const facts = await this.probe(distro, signal);
-        if (!facts.shells.some((entry) => entry.path === shell)) throw new Error(`${shell} is not an installed shell in ${distro}`);
-        state.shells[distro] = shell;
-      }
-      writeState(state);
-      return this.environments();
-    });
   }
 }

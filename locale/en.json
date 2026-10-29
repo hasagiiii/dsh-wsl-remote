@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "WSL Execution Environment",
-    "description": "Like VS Code Remote - WSL: the UI and models stay on Windows while Agent commands, file edits and searches run inside WSL. Choose the environment and default shell in General settings; changes apply after a restart."
+    "title": "WSL Remote Connections",
+    "description": "Like Codex's WSL remote connections: each WSL distribution runs your own dsh beside this Windows one, with its own sessions, plugins and native Linux files, reached through wsl.exe and optionally sharing the Windows sign-in. Connect in General settings; no restart needed."
   }
 }
