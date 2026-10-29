@@ -1,5 +1,7 @@
 # @local/dsh-wsl-remote
 
+English | [简体中文](README.zh-CN.md)
+
 Run Agent commands, file edits and searches inside WSL while DeepSeek Harness stays on Windows — the same split as VS Code Remote - WSL.
 
 | Stays on Windows | Runs inside WSL (in WSL mode) |
