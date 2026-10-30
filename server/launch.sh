@@ -11,7 +11,21 @@ s=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)
 case "$1" in
 probe)
   printf '__WSLR__ shell=%s\n' "$s"
-  "$s" -ilc 'p=$(command -v dsh 2>/dev/null); printf "\n__WSLR__ path=%s\n" "$p"; [ -n "$p" ] && printf "__WSLR__ dsh=%s\n" "$(dsh --version 2>/dev/null)"' </dev/null 2>/dev/null
+  if [ -r /etc/os-release ]; then
+    # Subshell so os-release variables cannot leak into the probe below.
+    ( . /etc/os-release; printf '__WSLR__ osName=%s\n__WSLR__ osVersion=%s\n__WSLR__ osPretty=%s\n' "${NAME:-}" "${VERSION_ID:-}" "${PRETTY_NAME:-}" )
+  fi
+  printf '__WSLR__ home=%s\n' "$HOME"
+  # Everything the install guidance needs: dsh, and whether node/npm/nvm exist to install it with.
+  "$s" -ilc '
+    p=$(command -v dsh 2>/dev/null); printf "\n__WSLR__ path=%s\n" "$p"
+    [ -n "$p" ] && printf "__WSLR__ dsh=%s\n" "$(dsh --version 2>/dev/null)"
+    n=$(command -v node 2>/dev/null); printf "__WSLR__ node=%s\n" "$n"
+    [ -n "$n" ] && printf "__WSLR__ nodeVersion=%s\n" "$(node --version 2>/dev/null)"
+    printf "__WSLR__ npm=%s\n" "$(command -v npm 2>/dev/null)"
+    [ -n "${NVM_DIR:-}" ] && [ -s "$NVM_DIR/nvm.sh" ] && printf "__WSLR__ nvm=1\n"
+    case ":$PATH:" in *":$HOME/.local/bin:"*) printf "__WSLR__ localBinOnPath=1\n" ;; esac
+  ' </dev/null 2>/dev/null
   ;;
 run)
   profile=$2

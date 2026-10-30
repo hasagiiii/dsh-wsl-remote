@@ -13,8 +13,15 @@ import { pathToFileURL } from 'node:url';
 import { PassThrough } from 'node:stream';
 import { compareVersions } from '../lib/version.js';
 import { loadSettings, writeSettings } from '../lib/state.js';
-import { RemoteConnection } from '../lib/remote.js';
+import { RemoteConnection, parseProbe, renderLauncher } from '../lib/remote.js';
 import { Mux } from '../lib/mux.js';
+import { decode, parseDistros } from '../lib/wsl.js';
+import { dshRequirement, nodeRequirement, requirementMessage } from '../lib/requirements.js';
+import { parseRequest } from '../lib/requests.js';
+import { distroOf, isLinuxAbsolute, worldOf } from '../lib/exec/route.js';
+import { createPathMapper } from '../lib/exec/paths.js';
+import { environmentSection } from '../lib/exec/agent-tools.js';
+import { fromUncPath, toUncPath } from '../lib/linux-fs.js';
 
 let failures = 0;
 async function test(name, body) {
@@ -44,6 +51,126 @@ await test('settings: version-1 file migrates to remote connections', () => {
   assert.deepEqual(settings, { ports: {}, version: 2, shareLogin: true, profile: 'web', autoConnect: [] });
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).version, 2);
   assert.equal(loadSettings(file).migrated, false);
+});
+
+await test('wsl --list --verbose parsing', () => {
+  const english = '  NAME            STATE           VERSION\r\n* Ubuntu-26.04    Running         2\r\n  Debian          Stopped         1\r\n  docker-desktop  Running         2\r\n';
+  assert.deepEqual(parseDistros(english), [{ name: 'Ubuntu-26.04', isDefault: true }]);
+  const chinese = '  名称            状态           版本\r\n* Ubuntu-26.04    Stopped         2\r\n  Arch            Running         2\r\n';
+  assert.deepEqual(parseDistros(chinese), [{ name: 'Ubuntu-26.04', isDefault: true }, { name: 'Arch', isDefault: false }]);
+  assert.deepEqual(parseDistros(decode(Buffer.from(`\uFEFF${english}`, 'utf16le'))), [{ name: 'Ubuntu-26.04', isDefault: true }]);
+  assert.deepEqual(parseDistros(''), []);
+});
+
+await test('probe: dsh, OS and install facts', () => {
+  const stdout = [
+    '__WSLR__ shell=/usr/bin/zsh',
+    '__WSLR__ osName=Ubuntu',
+    '__WSLR__ osVersion=26.04',
+    '__WSLR__ osPretty=Ubuntu 26.04 LTS',
+    '__WSLR__ home=/home/me',
+    'motd noise from the login shell',
+    '',
+    '__WSLR__ path=/home/me/.nvm/versions/node/v24.19.0/bin/dsh',
+    '__WSLR__ dsh=0.2.1-rc.2',
+    '__WSLR__ node=/home/me/.nvm/versions/node/v24.19.0/bin/node',
+    '__WSLR__ nodeVersion=v24.19.0',
+    '__WSLR__ npm=/home/me/.nvm/versions/node/v24.19.0/bin/npm',
+    '__WSLR__ nvm=1',
+    '__WSLR__ localBinOnPath=1',
+  ].join('\n');
+  const facts = parseProbe(stdout);
+  assert.equal(facts.dshPath, '/home/me/.nvm/versions/node/v24.19.0/bin/dsh');
+  assert.equal(facts.dsh, '0.2.1-rc.2');
+  assert.deepEqual(facts.os, { name: 'Ubuntu', version: '26.04', pretty: 'Ubuntu 26.04 LTS' });
+  assert.equal(facts.home, '/home/me');
+  assert.equal(facts.nvm, true);
+  assert.equal(facts.localBinOnPath, true);
+  assert.equal(dshRequirement(facts), undefined);
+  assert.equal(parseProbe('').os, undefined);
+});
+
+await test('install guidance: missing dsh, missing node, outdated dsh', () => {
+  const withNode = dshRequirement({ dshPath: '', node: '/usr/bin/node', npm: '/usr/bin/npm', nvm: false });
+  assert.equal(withNode.reason, 'dsh-missing');
+  assert.deepEqual(withNode.steps.map((step) => step.command), ['npm install -g @deepseek-ai/dsh', 'dsh --version']);
+
+  const bare = dshRequirement({ dshPath: '', node: '', npm: '', nvm: false });
+  assert.deepEqual(bare.steps.map((step) => step.note), ['nvm', 'node-after-nvm', 'install', 'verify']);
+  assert.match(bare.steps[0].command, /nvm-sh\/nvm\/.*install\.sh \| bash$/);
+  assert.equal(bare.steps[1].command, 'nvm install --lts');
+
+  const nvmOnly = dshRequirement({ dshPath: '', node: '', npm: '', nvm: true });
+  assert.deepEqual(nvmOnly.steps.map((step) => step.note), ['node', 'install', 'verify']);
+
+  const old = dshRequirement({ dshPath: '/usr/bin/dsh', dsh: '0.2.0', node: '/usr/bin/node', npm: '/usr/bin/npm' });
+  assert.equal(old.reason, 'dsh-outdated');
+  assert.equal(old.found, '0.2.0');
+  assert.deepEqual(old.steps.map((step) => step.note), ['update', 'verify']);
+  assert.match(requirementMessage('Ubuntu', old), /^dsh 0\.2\.0 in Ubuntu is older than the required .*: npm install -g @deepseek-ai\/dsh$/);
+  assert.match(requirementMessage('Ubuntu', bare), /not found on the login PATH of Ubuntu.*&& nvm install --lts && npm install -g @deepseek-ai\/dsh$/);
+});
+
+await test('dsh-harness: launcher template and request files', () => {
+  const template = readFileSync(new URL('../server/dsh-harness.sh', import.meta.url), 'utf8');
+  const script = renderLauncher(template, { windowsExe: "D:\\it's\\DeepSeek Harness.exe", requestDir: 'C:\\Users\\me\\.dsh\\wsl-remote\\requests' });
+  assert.match(script, /^WINDOWS_EXE='D:\\it'\\''s\\DeepSeek Harness\.exe'$/m);
+  assert.match(script, /^REQUEST_DIR='C:\\Users\\me\\\.dsh\\wsl-remote\\requests'$/m);
+  assert.ok(!script.includes('@@'));
+  assert.ok(script.includes('@local/dsh-wsl-remote'), 'the ownership mark guards against overwriting a foreign file');
+
+  assert.deepEqual(parseRequest(Buffer.from("dsh-harness/1\0Ubuntu-26.04\0/tmp/a b/中文 'q'\0")), { distro: 'Ubuntu-26.04', path: "/tmp/a b/中文 'q'" });
+  assert.equal(parseRequest(Buffer.from('dsh-harness/1\0Ubuntu\0relative/path\0')), undefined);
+  assert.equal(parseRequest(Buffer.from('dsh-harness/1\0bad name\0/x\0')), undefined);
+  assert.equal(parseRequest(Buffer.from('something else')), undefined);
+});
+
+await test('WSL workspace routing by path', () => {
+  const ws = '\\\\wsl.localhost\\Ubuntu-26.04\\home\\me\\repo';
+  assert.equal(distroOf(ws), 'Ubuntu-26.04');
+  assert.equal(distroOf('\\\\wsl$\\Debian\\x'), 'Debian');
+  assert.equal(distroOf('//wsl.localhost/Arch/home'), 'Arch');
+  assert.equal(distroOf('\\\\wsl.localhost\\Ubuntu-26.04'), 'Ubuntu-26.04');
+  assert.equal(distroOf('C:\\work'), undefined);
+  assert.equal(distroOf('\\\\server\\share\\x'), undefined);
+  assert.equal(distroOf(undefined), undefined);
+  // A path names its own world; otherwise the cwd decides.
+  assert.equal(worldOf('src/a.js', ws), 'Ubuntu-26.04');
+  assert.equal(worldOf('/home/me/repo/a.js', ws), 'Ubuntu-26.04');
+  assert.equal(worldOf('C:\\work\\a.js', ws), undefined);
+  assert.equal(worldOf(`${ws}\\a.js`, 'E:\\proj'), 'Ubuntu-26.04');
+  assert.equal(worldOf('/home/me/a.js', 'E:\\proj'), undefined);
+  assert.equal(worldOf('a.js', 'E:\\proj'), undefined);
+  assert.ok(isLinuxAbsolute('/x') && !isLinuxAbsolute('//wsl.localhost/x') && !isLinuxAbsolute('x'));
+});
+
+await test('WSL path mapping round-trips', () => {
+  const map = createPathMapper('Ubuntu-26.04');
+  assert.equal(map.toLinux('\\\\wsl.localhost\\Ubuntu-26.04\\home\\me\\repo'), '/home/me/repo');
+  assert.equal(map.toLinux('\\\\wsl.localhost\\Ubuntu-26.04'), '/');
+  assert.equal(map.toLinux('C:\\Users\\me'), '/mnt/c/Users/me');
+  assert.equal(map.toLinux('/already/linux'), '/already/linux');
+  assert.equal(map.toLinux('\\\\wsl.localhost\\Other\\x'), '\\\\wsl.localhost\\Other\\x');
+  assert.equal(map.toWindows('/home/me'), '\\\\wsl.localhost\\Ubuntu-26.04\\home\\me');
+  assert.equal(toUncPath('Ubuntu-26.04', '/home/me/repo'), '\\\\wsl.localhost\\Ubuntu-26.04\\home\\me\\repo');
+  assert.deepEqual(fromUncPath('\\\\wsl.localhost\\Ubuntu-26.04\\home\\me\\repo'), { distro: 'Ubuntu-26.04', path: '/home/me/repo' });
+});
+
+await test('WSL workspace requirement: Node.js for the Linux helper', () => {
+  assert.equal(nodeRequirement({ node: '/usr/bin/node', nodeVersion: 'v24.19.0', nodeSupported: true }), undefined);
+  const old = nodeRequirement({ node: '/usr/bin/node', nodeVersion: 'v18.19.1', nodeSupported: false });
+  assert.equal(old.reason, 'node-missing');
+  assert.equal(old.found, 'v18.19.1');
+  assert.deepEqual(old.steps.map((step) => step.command), ['curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash', 'nvm install --lts', 'node --version']);
+  assert.match(requirementMessage('Ubuntu', old), /need Node\.js 22\+ .*found v18\.19\.1.*&& nvm install --lts$/);
+  assert.equal(nodeRequirement({}).found, undefined);
+});
+
+await test('WSL environment prompt section', () => {
+  const text = environmentSection('Ubuntu-26.04', 'Ubuntu 26.04', '/usr/bin/zsh');
+  assert.match(text, /WSL Linux distribution Ubuntu-26\.04 \(Ubuntu 26\.04\)/);
+  assert.match(text, /`\/usr\/bin\/zsh -c`/);
+  assert.match(text, /\\\\wsl\.localhost\\Ubuntu-26\.04\\home\\me\\repo is \/home\/me\/repo/);
 });
 
 await test('settings: invalid fields are dropped', () => {

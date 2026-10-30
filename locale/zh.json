@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "WSL 远程连接",
-    "description": "与 Codex 的 WSL 远程连接相同：每个 WSL 发行版运行你自己安装的 dsh，与本机 Windows 并存，拥有独立的会话、插件和原生 Linux 文件，通过 wsl.exe 连接，可选共享 Windows 登录状态。在通用设置中连接，无需重启。"
+    "title": "WSL",
+    "description": "像 Codex 一样使用 WSL：添加 WSL 工作区后，该工作区会话的命令、文件读写和搜索在对应发行版的 Linux 中执行，其他工作区照常在 Windows 执行；也可以在 WSL 中启动你自己的 dsh（WSL 远程连接），或在 WSL 终端用 dsh-harness 打开目录。只需在 Windows 上安装。"
   }
 }

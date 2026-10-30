@@ -27,10 +27,22 @@ const status = await service.status();
 console.log(JSON.stringify(status, null, 2));
 assert.equal(status.shareLogin, true);
 assert.ok(Array.isArray(status.distros));
-assert.deepEqual([...routes.keys()].sort(), ['connect', 'connections', 'disconnect', 'open', 'settings'].map((p) => `/api/local-wsl-remote/${p}`).sort());
+assert.deepEqual([...routes.keys()].sort(), ['connect', 'connections', 'disconnect', 'open', 'settings', 'linux/list', 'linux/mkdir', 'distros', 'open-requests', 'open-requests/claim'].map((p) => `/api/local-wsl-remote/${p}`).sort());
 assert.equal(tools[0].name, 'wsl_remote_connections');
 const bad = await routes.get('/api/local-wsl-remote/connect').fetch(new Request('http://x/', { method: 'POST', body: JSON.stringify({ distro: 'no such distro' }) }));
 assert.equal(bad.status, 400);
 const saved = await (await routes.get('/api/local-wsl-remote/settings').fetch(new Request('http://x/', { method: 'POST', body: JSON.stringify({ shareLogin: false, profile: 'web' }) }))).json();
 assert.equal(saved.shareLogin, false);
+const post = async (path, value) => routes.get(`/api/local-wsl-remote/${path}`).fetch(new Request('http://x/', { method: 'POST', body: JSON.stringify(value) }));
+assert.equal((await post('linux/list', { distro: 'no such distro' })).status, 400);
+const distro = status.distros[0]?.name;
+if (distro !== undefined) {
+  // Needs a real WSL distribution: the picker's first page is the Linux home.
+  const listing = await (await post('linux/list', { distro })).json();
+  assert.ok(listing.path.startsWith('/'), JSON.stringify(listing));
+  assert.equal(listing.unc, `\\\\wsl.localhost\\${distro}${listing.path.replace(/\//g, '\\')}`);
+  const info = await (await routes.get('/api/local-wsl-remote/distros').fetch(new Request('http://x/'))).json();
+  console.log('distros:', JSON.stringify(info.distros));
+  assert.ok(info.distros.find((entry) => entry.name === distro)?.os?.name, 'os-release read');
+}
 console.log('PASS');

@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "WSL Remote Connections",
-    "description": "Like Codex's WSL remote connections: each WSL distribution runs your own dsh beside this Windows one, with its own sessions, plugins and native Linux files, reached through wsl.exe and optionally sharing the Windows sign-in. Connect in General settings; no restart needed."
+    "title": "WSL",
+    "description": "Use WSL like Codex: sessions in a WSL workspace run commands, file edits and searches inside that distribution while other workspaces stay on Windows; you can also run your own dsh inside WSL (WSL remote connections) or open a folder from a WSL terminal with dsh-harness. Install on Windows only."
   }
 }

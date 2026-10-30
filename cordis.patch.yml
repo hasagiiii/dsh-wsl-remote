@@ -1,10 +1,62 @@
-# WSL remote connections for DeepSeek Harness (Codex-style).
+# WSL for DeepSeek Harness (Codex-style). Install on the Windows Host only.
 #
-# Only the Host plugin is inserted. The Windows execution providers, tools and
-# Agent presets stay exactly as shipped: each WSL 2 distribution is a separate
-# remote host that runs the user's own `dsh` inside WSL, reached through the
-# stdio of `wsl.exe`, and listed in Settings → General.
+# 1. `local-wsl-remote` — the Host plugin: WSL remote connections (each
+#    distribution runs its own `dsh`), the WSL folder picker, `dsh-harness`.
+#
+# 2. WSL workspaces run inside their distribution. DeepSeek Harness mounts
+#    exactly one ctx.subprocess / ctx.sandbox / ctx.fs / ctx.shell; on Windows
+#    these rows replace the shipped Windows rows with dispatchers that keep
+#    using the very same Windows classes for every ordinary path, and send
+#    calls whose path is in a WSL workspace (\\wsl.localhost\<distro>\…) to
+#    that distribution, where DeepSeek Harness's POSIX helper runs them with
+#    Linux paths and bubblewrap. Windows and WSL sessions run side by side.
+#    On any other platform every row below stays inert, so installing this
+#    bundle by mistake on Linux or macOS changes nothing.
 - insert:
     - id: local-wsl-remote
       name: '@local/dsh-wsl-remote'
       config: {}
+
+    - id: local-wsl-exec
+      name: '@local/dsh-wsl-remote/exec'
+      disabled: !!js "process.platform !== 'win32'"
+      config:
+        sandbox: {}
+        fs: {}
+        pwsh: {}
+        bash:
+          timeoutMs: 60000
+
+    - id: local-wsl-subprocess
+      name: '@local/dsh-wsl-remote/subprocess'
+      disabled: !!js "process.platform !== 'win32'"
+
+    - id: local-wsl-sandbox
+      name: '@local/dsh-wsl-remote/sandbox'
+      disabled: !!js "process.platform !== 'win32'"
+
+    - id: local-wsl-fs
+      name: '@local/dsh-wsl-remote/fs'
+      disabled: !!js "process.platform !== 'win32'"
+
+    - id: local-wsl-shell
+      name: '@local/dsh-wsl-remote/shell'
+      disabled: !!js "process.platform !== 'win32'"
+
+# On Windows the shipped providers run inside the dispatchers above.
+- id: subprocess
+  name: '@deepseek-ai/dsh-subprocess-local'
+  disabled: !!js "process.platform === 'win32'"
+
+- id: sandbox
+  name: '@deepseek-ai/dsh-sandbox-local'
+  disabled: !!js "process.platform === 'win32'"
+
+- id: fs-sandbox
+  name: '@deepseek-ai/dsh-fs-sandbox'
+  disabled: !!js "process.platform === 'win32'"
+
+- id: pwsh-sandbox
+  name: '@deepseek-ai/dsh-pwsh-sandbox'
+  # Windows: inside the shell dispatcher. Elsewhere: the shipped condition (not on POSIX).
+  disabled: true
