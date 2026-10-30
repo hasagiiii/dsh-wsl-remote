@@ -9,7 +9,7 @@ window.__ModuleLoader__.load({
     const dictionaries = {
       zh: {
         'title': 'WSL 远程连接',
-        'description': '每个 WSL 发行版都是独立的远程主机（与 Codex 相同）：连接后在 WSL 中启动你自己安装的 dsh，使用 WSL 的 ~/.dsh、插件和原生 Linux 文件，与本机 Windows 会话并存，无需重启。',
+        'description': '每个 WSL 发行版都是一台远程主机（与 Codex 相同）：连接后在 WSL 中启动你自己安装的 dsh，使用 WSL 的 ~/.dsh、模型、插件和原生 Linux 文件。它的工作区和会话直接显示在这个窗口里，与 Windows 会话并列，无需重启。',
         'loading': '正在检测 WSL…',
         'none': '未检测到可用的 WSL 2 发行版。',
         'discoveryError': '检测 WSL 发行版失败，正在自动重试：{message}',
@@ -43,9 +43,6 @@ window.__ModuleLoader__.load({
         'req.note.install': '安装 dsh',
         'req.note.update': '更新 dsh',
         'req.note.verify': '确认输出 {minimum} 或更高版本',
-        'req.node-missing': '{distro} 中的 WSL 工作区需要 Node.js {minimum} 或更高版本（当前：{found}）。请在 WSL 终端中依次运行以下命令安装，之后在该工作区重新发起会话：',
-        'req.note.verify-node': '确认输出 v{minimum} 或更高版本',
-        'exec.problem': 'WSL 工作区无法在该发行版中执行：{message}',
         'req.terminal': '打开 WSL 终端：在 Windows 中运行 wsl -d {distro}',
         'copy': '复制',
         'copied': '已复制',
@@ -63,7 +60,7 @@ window.__ModuleLoader__.load({
         'ws.distro': '发行版',
         'ws.next': '下一步',
         'ws.cancel': '取消',
-        'ws.notConnected': '{distro} 尚未连接。WSL 工作区里的会话仍由本机 Windows 执行；连接后可在侧边栏打开 WSL 中的 dsh。',
+        'ws.notConnected': '{distro} 尚未连接。添加后会自动连接，并在 WSL 中你自己的 dsh 里运行该工作区的会话。',
         'picker.title': '选择文件夹 · WSL: {distro}',
         'picker.up': '上一级',
         'picker.home': '主目录',
@@ -86,7 +83,7 @@ window.__ModuleLoader__.load({
       },
       en: {
         'title': 'WSL remote connections',
-        'description': 'Each WSL distribution is a separate remote host (as in Codex): connecting starts your own dsh inside WSL, with the WSL ~/.dsh, plugins and native Linux files, beside the Windows sessions here. No restart needed.',
+        'description': 'Each WSL distribution is a remote host (as in Codex): connecting starts your own dsh inside WSL, with the WSL ~/.dsh, models, plugins and native Linux files. Its workspaces and sessions appear right in this window, beside the Windows ones. No restart needed.',
         'loading': 'Detecting WSL…',
         'none': 'No WSL 2 distribution found.',
         'discoveryError': 'Could not list WSL distributions; retrying automatically: {message}',
@@ -120,9 +117,6 @@ window.__ModuleLoader__.load({
         'req.note.install': 'Install dsh',
         'req.note.update': 'Update dsh',
         'req.note.verify': 'Check that it prints {minimum} or newer',
-        'req.node-missing': 'WSL workspaces in {distro} need Node.js {minimum} or newer (found: {found}). Run these commands in a WSL terminal, then start a new session in the workspace:',
-        'req.note.verify-node': 'Check that it prints v{minimum} or newer',
-        'exec.problem': 'WSL workspaces cannot run in this distribution: {message}',
         'req.terminal': 'To open a WSL terminal, run wsl -d {distro} in Windows',
         'copy': 'Copy',
         'copied': 'Copied',
@@ -140,7 +134,7 @@ window.__ModuleLoader__.load({
         'ws.distro': 'Distribution',
         'ws.next': 'Next',
         'ws.cancel': 'Cancel',
-        'ws.notConnected': '{distro} is not connected. Sessions in a WSL workspace still run on this Windows Host; connect it to open the WSL dsh in the sidebar.',
+        'ws.notConnected': '{distro} is not connected. It connects when you add the folder; the workspace’s sessions run in your own dsh inside WSL.',
         'picker.title': 'Choose a folder · WSL: {distro}',
         'picker.up': 'Parent folder',
         'picker.home': 'Home',
@@ -579,12 +573,21 @@ window.__ModuleLoader__.load({
             paint();
           });
         };
-        const workspaces = ctx.get('workspaces');
-        workspaceItems = workspaces?.list?.getSnapshot?.().items ?? [];
-        const offWorkspaces = workspaces?.list?.subscribe?.(() => {
-          workspaceItems = workspaces.list.getSnapshot().items ?? [];
-          schedule();
-        });
+        // The workspace client service may mount after this plugin: follow it whenever it appears.
+        let workspaces;
+        let offWorkspaces;
+        const attach = () => {
+          const current = ctx.get('workspaces');
+          if (current === workspaces) return;
+          offWorkspaces?.();
+          workspaces = current;
+          workspaceItems = workspaces?.list?.getSnapshot?.().items ?? [];
+          offWorkspaces = workspaces?.list?.subscribe?.(() => {
+            workspaceItems = workspaces.list.getSnapshot().items ?? [];
+            schedule();
+          });
+        };
+        attach();
         const offDistros = distros.subscribe(() => {
           distroState = distros.getSnapshot();
           schedule();
@@ -592,6 +595,7 @@ window.__ModuleLoader__.load({
         const offLocale = ctx.locale.subscribe(() => schedule());
         const stateText = (state) => t(`state.${state ?? 'disconnected'}`);
         const paint = () => {
+          attach();
           const byId = new Map(workspaceItems.map((item) => [item.workspaceId, item]));
           for (const row of document.querySelectorAll('[data-row-key^="workspace:"]')) {
             const id = row.getAttribute('data-row-key').slice('workspace:'.length);
@@ -766,13 +770,6 @@ window.__ModuleLoader__.load({
             h('div', { className: 'lwr-note' }, tr('req.terminal', { distro: host.name })));
         }
 
-        /** WSL workspaces could not start their Linux runtime in this distribution. */
-        function ExecProblem({ host }) {
-          const tr = useT();
-          const problem = host.execProblem;
-          if (problem.requirement) return h(Requirement, { host, requirement: problem.requirement });
-          return h('div', { className: 'lwr-alert', role: 'alert' }, tr('exec.problem', { message: problem.message }));
-        }
 
         function Launcher({ launcher }) {
           const tr = useT();
@@ -815,7 +812,6 @@ window.__ModuleLoader__.load({
               h('div', { className: 'lwr-note' }, [tr(`state.${host.state}`), ...details].join(' · ')),
               host.requirement && h(Requirement, { host }),
               host.state === 'error' && host.error && !host.requirement && h('div', { className: 'lwr-alert', role: 'alert' }, host.error),
-              host.execProblem && h(ExecProblem, { host }),
               host.launcher && h(Launcher, { launcher: host.launcher }),
               failure && h('div', { className: 'lwr-alert', role: 'alert' }, failure)),
             h('div', { className: 'lwr-actions' },

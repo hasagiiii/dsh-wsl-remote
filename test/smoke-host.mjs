@@ -18,8 +18,8 @@ const ctx = {
   on: () => () => {},
   get: (name) => (name === 'credentials' ? {} : undefined),
   inject(names, callback) {
-    if (names[0] === 'connection') callback({ connection: { fetch: { register: (route) => routes.set(route.path, route) } } });
-    if (names[0] === 'tools') callback({ tools: { register: (tool) => tools.push(tool) } });
+    if (names[0] === 'connection') callback({ effect() {}, connection: { fetch: { register: (route) => routes.set(route.path, route) } } });
+    if (names[0] === 'tools') callback({ effect() {}, tools: { register: (tool) => tools.push(tool) } });
   },
 };
 const service = new WslRemoteService(ctx, {});

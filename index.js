@@ -1,18 +1,19 @@
 /**
- * @local/dsh-wsl-remote — WSL remote connections (Host half).
+ * @local/dsh-wsl-remote — WSL for DeepSeek Harness, Codex-style (Host half).
  *
- * Modelled on the Codex desktop app's "WSL remote connections": every WSL 2
- * distribution is a separate remote host next to this Windows Host, instead
- * of one application-wide switch that needs a restart.
- *  - Connecting starts the user's own `dsh` inside the distribution through
- *    the stdio of `wsl.exe` (no port opened by WSL); it uses the WSL
- *    `~/.dsh` profile, sessions, plugins and native ext4 files.
- *  - Its Web UI is relayed to a stable Windows loopback port and opens in the
- *    right sidebar or the system browser.
- *  - Sign-in can be shared: the WSL dsh then reads and writes credentials,
- *    including DeepSeek sign-in and token refreshes, in the Windows store
- *    under its writer lock. Turned off, each side signs in on its own.
- * Sessions stay where they started; nothing on this Host is replaced.
+ * Every WSL 2 distribution is a remote host next to this Windows Host:
+ *  - Connecting starts the user's own `dsh` (installed with
+ *    `npm i -g @deepseek-ai/dsh`) inside the distribution through the stdio
+ *    of `wsl.exe` (no port opened by WSL); it uses the WSL `~/.dsh` profile,
+ *    models, plugins, sessions and native ext4 files.
+ *  - WSL workspaces and their sessions are merged into this window: the
+ *    bridge (lib/bridge) routes every call that belongs to a WSL session or
+ *    workspace to that dsh through DeepSeek Harness's own Client packages,
+ *    and combines the session list, workspaces and live events.
+ *  - The WSL dsh Web UI also stays reachable through a Windows loopback relay.
+ *  - Sign-in can be shared: the WSL dsh then reads and writes credentials in
+ *    the Windows store under its writer lock.
+ * Nothing in the Windows composition is replaced.
  */
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -25,8 +26,7 @@ import { MIN_DSH_VERSION } from './lib/version.js';
 import { isDistro, isProfile, loadSettings, writeSettings } from './lib/state.js';
 import { watchRequests } from './lib/requests.js';
 import { createLinuxDirectory, listLinuxDirectory, parseOsRelease, toUncPath } from './lib/linux-fs.js';
-import { createLocator } from './lib/exec/locator.js';
-import { installWslAgentTools } from './lib/exec/agent-tools.js';
+import { WslBridge, wrapFetchRoutes, wrapGateway } from './lib/bridge/bridge.js';
 
 const packageDir = dirname(fileURLToPath(import.meta.url));
 const ROUTE = '/api/local-wsl-remote';
@@ -84,6 +84,8 @@ export default class WslRemoteService extends Service {
     this.discoveredAt = 0;
     this.discovering = undefined;
     this.connections = new Map();
+    /** Bridge listeners told when a connection's state changes. */
+    this.hostListeners = new Set();
     this.ready = this.discover();
 
     ctx.inject(['settings'], (scope) => {
@@ -108,38 +110,63 @@ export default class WslRemoteService extends Service {
       }
     });
 
-    // WSL workspaces: the execution dispatchers (bundle rows) route calls by path;
-    // this plugin tells them where each distribution's runtime is, and gives
-    // WSL-workspace Agents the Linux bash tool instead of pwsh.
-    this.execProblems = new Map();
-    this.locator = createLocator({
-      packageDir,
+    // The merge: WSL sessions and workspaces in this window.
+    this.bridge = new WslBridge({
       logger: ctx.logger,
-      onProblem: (distro, problem) => {
-        if (problem === undefined) this.execProblems.delete(distro);
-        else this.execProblems.set(distro, problem);
+      hosts: {
+        distros: () => this.distros.map((entry) => entry.name),
+        connected: (distro) => this.connections.get(distro)?.state === 'connected',
+        url: (distro) => this.connections.get(distro)?.openUrl(),
+        ensure: (distro) => this.ensureConnected(distro),
+        subscribe: (listener) => {
+          this.hostListeners.add(listener);
+          return () => this.hostListeners.delete(listener);
+        },
+        loadOrder: () => this.settings.workspaceOrder ?? [],
+        saveOrder: (order) => this.save({ ...this.settings, workspaceOrder: order }),
+      },
+      windows: {
+        knows: async (sessionId) => {
+          if (ctx.get('sessions')?.get(sessionId) !== undefined) return true;
+          return (await ctx.get('sessionPersistence')?.stat?.(sessionId)) !== undefined;
+        },
+        workspaces: () => {
+          const registry = ctx.get('workspaceRegistry');
+          if (registry === undefined) return undefined;
+          try {
+            return {
+              items: registry.list().map((workspace) => ({
+                workspaceId: workspace.id,
+                path: workspace.path,
+                title: workspace.title,
+                sessionIds: [...workspace.sessionIds],
+                createdAt: workspace.createdAt,
+                updatedAt: workspace.updatedAt,
+              })),
+              archivedSessionIds: [...registry.archivedSessionIds],
+              pinnedSessionIds: [...registry.pinnedSessionIds],
+            };
+          } catch {
+            return undefined;
+          }
+        },
       },
     });
-    ctx.inject(['wslExec'], (scope) => {
-      scope.wslExec.setLocator((distro) => this.locator.locate(distro));
-      ctx.logger.info('wsl-remote: WSL workspaces run inside their distribution');
+    ctx.effect(() => {
+      this.bridge.start();
+      return () => this.bridge.stop();
+    }, 'wsl-remote: WSL session bridge');
+    ctx.inject(['typertGateway'], (scope) => {
+      scope.effect(() => wrapGateway(scope.typertGateway, this.bridge), 'wsl-remote: Gateway merge');
     });
-    if (process.platform === 'win32') {
-      installWslAgentTools(ctx, {
-        logger: ctx.logger,
-        facts: async (distro) => {
-          const info = await this.distroInfo(distro).catch(() => ({}));
-          return { os: info.os, shell: this.locator.facts(distro)?.loginShell };
-        },
-        // The shipped bash tool module is itself the plugin ({ name, inject, Config, apply }).
-        bashTool: () => import('@deepseek-ai/dsh-tool-bash'),
-      });
-    }
+    ctx.inject(['connection'], (scope) => {
+      scope.effect(() => wrapFetchRoutes(scope.connection, this.bridge), 'wsl-remote: Fetch route merge');
+    });
 
     ctx.inject(['tools'], (scope) => {
       scope.tools.register({
         name: 'wsl_remote_connections',
-        description: 'List WSL remote connections: each WSL 2 distribution can run its own DeepSeek Harness (the user\'s WSL `dsh`, with its own sessions, plugins and Linux files) beside this Windows one. Reports connection state, the WSL dsh version and whether sign-in is shared with Windows. Read-only; connecting is a user action in Settings → General.',
+        description: 'List WSL remote connections: each WSL 2 distribution runs the user\'s own DeepSeek Harness (its WSL `dsh`, with its own models, plugins, sessions and Linux files); its WSL workspaces and sessions appear in this window. Reports connection state, the WSL dsh version and whether sign-in is shared with Windows. Read-only; connecting is a user action in Settings → General.',
         parameters: { type: 'object', properties: {}, additionalProperties: false },
         output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }] },
         isConcurrencySafe: () => true,
@@ -326,9 +353,30 @@ export default class WslRemoteService extends Service {
           };
         },
       });
+      connection.on('change', () => {
+        for (const listener of this.hostListeners) {
+          try {
+            listener();
+          } catch {}
+        }
+      });
       this.connections.set(distro, connection);
     }
     return connection;
+  }
+
+  /**
+   * Make a distribution's dsh reachable for the bridge: connect it (and
+   * remember it for the next start) when the user opens a WSL session of a
+   * disconnected distribution.
+   */
+  async ensureConnected(distro) {
+    const connection = this.connection(distro);
+    if (connection.state === 'connected') return;
+    await this.known(distro);
+    if (!this.settings.autoConnect.includes(distro)) this.remember(distro, true);
+    await connection.connect();
+    if (connection.state !== 'connected') throw new Error(connection.error ?? `${distro} is not connected`);
   }
 
   /**
@@ -361,13 +409,11 @@ export default class WslRemoteService extends Service {
       profile: this.settings.profile,
       credentialsAvailable: this.ctx.get('credentials') !== undefined,
       launcherAvailable: this.windowsExe !== undefined,
-      workspaceExecution: this.ctx.get('wslExec') !== undefined,
       ...(this.migrated ? { migratedFromStartupMode: true } : {}),
       distros: this.distros.map((entry) => ({
         isDefault: entry.isDefault,
         autoConnect: this.settings.autoConnect.includes(entry.name),
         ...(this.connections.get(entry.name)?.snapshot() ?? { name: entry.name, state: 'disconnected' }),
-        ...(this.execProblems.has(entry.name) ? { execProblem: this.execProblems.get(entry.name) } : {}),
       })),
     };
   }

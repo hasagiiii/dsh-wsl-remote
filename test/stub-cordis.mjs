@@ -2,8 +2,12 @@
 import { registerHooks } from 'node:module';
 
 const STUBS = {
-  '@deepseek-ai/cordis': 'export class Service { constructor(ctx, name) { this.ctx = ctx; this.name = name; } }',
+  '@deepseek-ai/cordis': 'export class Service { constructor(ctx, name) { this.ctx = ctx; this.name = name; } } export class Context {}',
   '@deepseek-ai/schemastery': 'const s = new Proxy(function () {}, { get: () => s, apply: () => s }); export default s;',
+  // The bridge's DSH client packages; the smoke test never opens a WSL session.
+  '@deepseek-ai/dsh-typert-registry/client': 'export const inject = []; export function apply() {}',
+  '@deepseek-ai/dsh-client-connection/client': 'export function installConnection() {}',
+  '@deepseek-ai/dsh-api-gateway/client': 'export const inject = []; export function apply() {}',
 };
 
 registerHooks({

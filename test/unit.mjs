@@ -16,11 +16,9 @@ import { loadSettings, writeSettings } from '../lib/state.js';
 import { RemoteConnection, parseProbe, renderLauncher } from '../lib/remote.js';
 import { Mux } from '../lib/mux.js';
 import { decode, parseDistros } from '../lib/wsl.js';
-import { dshRequirement, nodeRequirement, requirementMessage } from '../lib/requirements.js';
+import { dshRequirement, requirementMessage } from '../lib/requirements.js';
 import { parseRequest } from '../lib/requests.js';
-import { distroOf, isLinuxAbsolute, worldOf } from '../lib/exec/route.js';
-import { createPathMapper } from '../lib/exec/paths.js';
-import { environmentSection } from '../lib/exec/agent-tools.js';
+import { applyWorkspaceFrame, emptyWorkspaceState, insertBefore, mergeModelCatalogs, mergeWorkspaces, sessionHints, splitBytes, toHostArgs, wslSummary, baselineFrames } from '../lib/bridge/merge.js';
 import { fromUncPath, toUncPath } from '../lib/linux-fs.js';
 
 let failures = 0;
@@ -48,7 +46,7 @@ await test('settings: version-1 file migrates to remote connections', () => {
   writeFileSync(file, JSON.stringify({ environment: 'Ubuntu', node: '/usr/bin/node', serverDir: '/x', shells: { Ubuntu: '/usr/bin/zsh' } }));
   const { settings, migrated } = loadSettings(file);
   assert.equal(migrated, true);
-  assert.deepEqual(settings, { ports: {}, version: 2, shareLogin: true, profile: 'web', autoConnect: [] });
+  assert.deepEqual(settings, { ports: {}, version: 2, shareLogin: true, profile: 'web', autoConnect: [], workspaceOrder: [] });
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).version, 2);
   assert.equal(loadSettings(file).migrated, false);
 });
@@ -72,7 +70,7 @@ await test('probe: dsh, OS and install facts', () => {
     'motd noise from the login shell',
     '',
     '__WSLR__ path=/home/me/.nvm/versions/node/v24.19.0/bin/dsh',
-    '__WSLR__ dsh=0.2.1-rc.2',
+    '__WSLR__ dsh=0.2.1-rc.5',
     '__WSLR__ node=/home/me/.nvm/versions/node/v24.19.0/bin/node',
     '__WSLR__ nodeVersion=v24.19.0',
     '__WSLR__ npm=/home/me/.nvm/versions/node/v24.19.0/bin/npm',
@@ -81,12 +79,13 @@ await test('probe: dsh, OS and install facts', () => {
   ].join('\n');
   const facts = parseProbe(stdout);
   assert.equal(facts.dshPath, '/home/me/.nvm/versions/node/v24.19.0/bin/dsh');
-  assert.equal(facts.dsh, '0.2.1-rc.2');
+  assert.equal(facts.dsh, '0.2.1-rc.5');
   assert.deepEqual(facts.os, { name: 'Ubuntu', version: '26.04', pretty: 'Ubuntu 26.04 LTS' });
   assert.equal(facts.home, '/home/me');
   assert.equal(facts.nvm, true);
   assert.equal(facts.localBinOnPath, true);
   assert.equal(dshRequirement(facts), undefined);
+  assert.equal(dshRequirement({ ...facts, dsh: '0.2.1-rc.2' }).reason, 'dsh-outdated', 'merged sessions need the same DSH release on both sides');
   assert.equal(parseProbe('').os, undefined);
 });
 
@@ -125,58 +124,96 @@ await test('dsh-harness: launcher template and request files', () => {
   assert.equal(parseRequest(Buffer.from('something else')), undefined);
 });
 
-await test('WSL workspace routing by path', () => {
-  const ws = '\\\\wsl.localhost\\Ubuntu-26.04\\home\\me\\repo';
-  assert.equal(distroOf(ws), 'Ubuntu-26.04');
-  assert.equal(distroOf('\\\\wsl$\\Debian\\x'), 'Debian');
-  assert.equal(distroOf('//wsl.localhost/Arch/home'), 'Arch');
-  assert.equal(distroOf('\\\\wsl.localhost\\Ubuntu-26.04'), 'Ubuntu-26.04');
-  assert.equal(distroOf('C:\\work'), undefined);
-  assert.equal(distroOf('\\\\server\\share\\x'), undefined);
-  assert.equal(distroOf(undefined), undefined);
-  // A path names its own world; otherwise the cwd decides.
-  assert.equal(worldOf('src/a.js', ws), 'Ubuntu-26.04');
-  assert.equal(worldOf('/home/me/repo/a.js', ws), 'Ubuntu-26.04');
-  assert.equal(worldOf('C:\\work\\a.js', ws), undefined);
-  assert.equal(worldOf(`${ws}\\a.js`, 'E:\\proj'), 'Ubuntu-26.04');
-  assert.equal(worldOf('/home/me/a.js', 'E:\\proj'), undefined);
-  assert.equal(worldOf('a.js', 'E:\\proj'), undefined);
-  assert.ok(isLinuxAbsolute('/x') && !isLinuxAbsolute('//wsl.localhost/x') && !isLinuxAbsolute('x'));
-});
-
-await test('WSL path mapping round-trips', () => {
-  const map = createPathMapper('Ubuntu-26.04');
-  assert.equal(map.toLinux('\\\\wsl.localhost\\Ubuntu-26.04\\home\\me\\repo'), '/home/me/repo');
-  assert.equal(map.toLinux('\\\\wsl.localhost\\Ubuntu-26.04'), '/');
-  assert.equal(map.toLinux('C:\\Users\\me'), '/mnt/c/Users/me');
-  assert.equal(map.toLinux('/already/linux'), '/already/linux');
-  assert.equal(map.toLinux('\\\\wsl.localhost\\Other\\x'), '\\\\wsl.localhost\\Other\\x');
-  assert.equal(map.toWindows('/home/me'), '\\\\wsl.localhost\\Ubuntu-26.04\\home\\me');
+await test('WSL path spelling round-trips', () => {
   assert.equal(toUncPath('Ubuntu-26.04', '/home/me/repo'), '\\\\wsl.localhost\\Ubuntu-26.04\\home\\me\\repo');
+  assert.equal(toUncPath('Ubuntu-26.04', '/'), '\\\\wsl.localhost\\Ubuntu-26.04\\');
   assert.deepEqual(fromUncPath('\\\\wsl.localhost\\Ubuntu-26.04\\home\\me\\repo'), { distro: 'Ubuntu-26.04', path: '/home/me/repo' });
+  assert.deepEqual(fromUncPath('\\\\wsl$\\Debian\\x\\..\\y'), { distro: 'Debian', path: '/y' });
+  assert.equal(fromUncPath('C:\\work'), undefined);
 });
 
-await test('WSL workspace requirement: Node.js for the Linux helper', () => {
-  assert.equal(nodeRequirement({ node: '/usr/bin/node', nodeVersion: 'v24.19.0', nodeSupported: true }), undefined);
-  const old = nodeRequirement({ node: '/usr/bin/node', nodeVersion: 'v18.19.1', nodeSupported: false });
-  assert.equal(old.reason, 'node-missing');
-  assert.equal(old.found, 'v18.19.1');
-  assert.deepEqual(old.steps.map((step) => step.command), ['curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash', 'nvm install --lts', 'node --version']);
-  assert.match(requirementMessage('Ubuntu', old), /need Node\.js 22\+ .*found v18\.19\.1.*&& nvm install --lts$/);
-  assert.equal(nodeRequirement({}).found, undefined);
+await test('merge: which Session a Remote call names', () => {
+  assert.deepEqual(sessionHints({ request: { sessionId: 's1' } }), ['s1']);
+  assert.deepEqual(sessionHints({ agentId: 'a1', line: '/x' }), ['a1']);
+  assert.deepEqual(sessionHints({ workspaceFileScopeId: 's2', path: 'x' }), ['s2']);
+  assert.deepEqual(sessionHints({ request: { address: { kind: 'subagent', parentSessionId: 'p', childSessionId: 'c' } } }), ['p', 'c']);
+  assert.deepEqual(sessionHints({ childSessionId: 'c', parentSessionId: 'p' }), ['p', 'c']);
+  assert.deepEqual(sessionHints({}), []);
+  assert.deepEqual(sessionHints(undefined), []);
 });
 
-await test('WSL environment prompt section', () => {
-  const text = environmentSection('Ubuntu-26.04', 'Ubuntu 26.04', '/usr/bin/zsh');
-  assert.match(text, /WSL Linux distribution Ubuntu-26\.04 \(Ubuntu 26\.04\)/);
-  assert.match(text, /`\/usr\/bin\/zsh -c`/);
-  assert.match(text, /\\\\wsl\.localhost\\Ubuntu-26\.04\\home\\me\\repo is \/home\/me\/repo/);
+await test('merge: byte results split into attachments', () => {
+  const bytes = new Uint8Array([1, 2, 3]);
+  assert.deepEqual(splitBytes({ a: 1 }), { value: { a: 1 } });
+  const split = splitBytes({ file: { data: bytes, size: 3 }, list: [bytes] });
+  assert.deepEqual(split.value, { file: { data: null, size: 3 }, list: [null] });
+  assert.deepEqual(split.attachments.map((item) => item.path), [['file', 'data'], ['list', 0]]);
+  assert.equal(split.attachments[0].bytes, bytes);
+});
+
+await test('merge: workspace follow frames', () => {
+  let state = emptyWorkspaceState();
+  const a = { workspaceId: 'a', path: '/a', title: 'a', sessionIds: [], createdAt: '1', updatedAt: '1' };
+  const b = { workspaceId: 'b', path: '/b', title: 'b', sessionIds: ['s'], createdAt: '1', updatedAt: '1' };
+  state = applyWorkspaceFrame(state, { type: 'baseline', value: { items: [a], archivedSessionIds: [], pinnedSessionIds: [] } });
+  state = applyWorkspaceFrame(state, { type: 'upsert', workspace: b });
+  assert.deepEqual(state.items.map((item) => item.workspaceId), ['a', 'b']);
+  state = applyWorkspaceFrame(state, { type: 'order', workspaceIds: ['b', 'a'] });
+  assert.deepEqual(state.items.map((item) => item.workspaceId), ['b', 'a']);
+  state = applyWorkspaceFrame(state, { type: 'archived', archivedSessionIds: ['s'] });
+  state = applyWorkspaceFrame(state, { type: 'remove', workspaceId: 'b' });
+  assert.deepEqual(state, { items: [a], archivedSessionIds: ['s'], pinnedSessionIds: [] });
+});
+
+await test('merge: Windows and WSL workspaces in one list', () => {
+  const win = { workspaceId: 'w1', path: 'C:\\work', title: 'work', sessionIds: ['ws1'], createdAt: '2026-01-01', updatedAt: '2026-01-02' };
+  const legacy = { workspaceId: 'w2', path: '\\\\wsl.localhost\\Ubuntu\\home\\me\\repo', title: 'repo', sessionIds: ['old'], createdAt: '2026-01-01', updatedAt: '2026-01-01' };
+  const linux = { workspaceId: 'l1', path: '/home/me/repo', title: 'repo', sessionIds: ['ls1'], createdAt: '2026-02-01', updatedAt: '2026-02-03' };
+  const other = { workspaceId: 'l2', path: '/srv/x', title: 'x', sessionIds: [], createdAt: '2026-02-01', updatedAt: '2026-02-01' };
+  const { baseline, owners, order } = mergeWorkspaces({
+    windows: { items: [win, legacy], archivedSessionIds: ['a1'], pinnedSessionIds: [] },
+    hosts: [{ distro: 'Ubuntu', state: { items: [linux, other], archivedSessionIds: ['a2'], pinnedSessionIds: ['p2'] } }],
+    order: ['l2'],
+  });
+  assert.deepEqual(order, ['l2', 'w1', 'w2']);
+  assert.deepEqual(baseline.items.map((item) => item.path), ['\\\\wsl.localhost\\Ubuntu\\srv\\x', 'C:\\work', '\\\\wsl.localhost\\Ubuntu\\home\\me\\repo']);
+  // The legacy Windows row and the WSL row of the same folder are one row, under the Windows id.
+  const merged = baseline.items[2];
+  assert.equal(merged.workspaceId, 'w2');
+  assert.deepEqual(merged.sessionIds, ['ls1', 'old']);
+  assert.equal(merged.updatedAt, '2026-02-03');
+  assert.deepEqual(owners.get('w2'), { host: 'Ubuntu', id: 'l1', legacy: 'w2' });
+  assert.deepEqual(owners.get('l2'), { host: 'Ubuntu', id: 'l2' });
+  assert.deepEqual(owners.get('w1'), { host: 'windows', id: 'w1' });
+  assert.deepEqual(baseline.archivedSessionIds, ['a1', 'a2']);
+  assert.deepEqual(baseline.pinnedSessionIds, ['p2']);
+  assert.deepEqual(insertBefore(['a', 'b', 'c'], 'c', 'a'), ['c', 'a', 'b']);
+  assert.deepEqual(insertBefore(['a', 'b', 'c'], 'a'), ['b', 'c', 'a']);
+});
+
+await test('merge: WSL values shown in the Windows spelling, sent back as Linux', () => {
+  assert.deepEqual(wslSummary('Ubuntu', { sessionId: 's', cwd: '/home/me' }), { sessionId: 's', cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me' });
+  assert.deepEqual(wslSummary('Ubuntu', { sessionId: 's' }), { sessionId: 's' });
+  const ids = { w2: 'l1' };
+  assert.deepEqual(toHostArgs('session/create', { request: { workspaceId: 'w2' } }, (id) => ids[id]), { request: { workspaceId: 'l1' } });
+  assert.deepEqual(toHostArgs('workspace/create', { request: { path: '\\\\wsl.localhost\\Ubuntu\\srv' } }, () => undefined), { request: { path: '/srv' } });
+  assert.deepEqual(toHostArgs('session/prompt', { request: { sessionId: 's' } }, () => undefined), { request: { sessionId: 's' } });
+});
+
+await test('merge: model catalogs and control baselines', () => {
+  const windows = { default: { provider: 'p1', model: 'm1' }, routableProviders: ['p1'], groups: [{ id: 'p1', name: 'P1', models: [{ id: 'm1', name: 'M1' }] }], failures: [] };
+  const wsl = { default: { provider: 'p2', model: 'm2' }, routableProviders: ['p2', 'p1'], groups: [{ id: 'p2', name: 'P2', models: [{ id: 'm2', name: 'M2' }] }, { id: 'p1', name: 'P1', models: [{ id: 'm1', name: 'M1' }, { id: 'm3', name: 'M3' }] }], failures: [] };
+  const merged = mergeModelCatalogs(windows, [{ distro: 'Ubuntu', catalog: wsl }]);
+  assert.deepEqual(merged.default, windows.default);
+  assert.deepEqual(merged.routableProviders, ['p1', 'p2']);
+  assert.deepEqual(merged.groups.map((group) => `${group.id}:${group.models.map((model) => model.id).join('+')}`), ['p1:m1+m3', 'p2:m2']);
+  assert.deepEqual(baselineFrames({ projections: { s: { asOfSeq: 7, values: { title: 't' } } } }), [{ type: 'projection', sessionId: 's', key: 'title', value: 't', seq: 7 }]);
 });
 
 await test('settings: invalid fields are dropped', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'wslr-')), 'wsl-remote.json');
   const value = writeSettings({ shareLogin: false, profile: 'bad name', autoConnect: ['Ubuntu', 'x y', 'Ubuntu'], ports: { Ubuntu: 40123, Bad: 80 } }, file);
-  assert.deepEqual(value, { ports: { Ubuntu: 40123 }, version: 2, shareLogin: false, profile: 'web', autoConnect: ['Ubuntu'] });
+  assert.deepEqual(value, { ports: { Ubuntu: 40123 }, version: 2, shareLogin: false, profile: 'web', autoConnect: ['Ubuntu'], workspaceOrder: [] });
 });
 
 /** A credentials provider shaped like dsh-credentials-local (serialized modifyRecord). */

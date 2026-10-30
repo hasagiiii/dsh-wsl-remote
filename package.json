@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-wsl-remote",
-  "version": "3.1.0",
+  "version": "4.0.0",
   "private": true,
   "type": "module",
-  "description": "WSL for DeepSeek Harness, like the Codex desktop app: WSL workspaces whose commands, file edits and searches run inside the distribution, and WSL remote connections that run your own dsh beside the Windows one.",
+  "description": "WSL for DeepSeek Harness, like the Codex desktop app: each WSL distribution runs your own dsh (WSL ~/.dsh, models, plugins and Linux files), and its workspaces and sessions appear in the Windows window beside the Windows ones.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -11,9 +11,7 @@
   },
   "scripts": {
     "test": "node test/unit.mjs",
-    "test:remote": "node test/remote.mjs",
-    "test:exec": "node --import ./test/resolve-dsh.mjs test/exec-e2e.mjs",
-    "test:dispatch": "node --import ./test/resolve-dsh.mjs test/dispatch.mjs"
+    "test:remote": "node test/remote.mjs"
   },
   "engines": {
     "dsh": ">=0.2.1-rc.5 <0.2.2-0"
@@ -21,40 +19,19 @@
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.0.5",
     "@deepseek-ai/schemastery": "~3.18.5",
-    "@deepseek-ai/dsh-bash-sandbox": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-fs": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-fs-sandbox": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-pwsh-sandbox": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-sandbox": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-sandbox-local": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-shell": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-subprocess": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-subprocess-local": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-tool-bash": "0.2.1-rc.5",
-    "zod": "4.4.3"
+    "@deepseek-ai/dsh-api-gateway": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-typert-registry": "0.2.1-rc.5"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": { "optional": true },
     "@deepseek-ai/schemastery": { "optional": true },
-    "@deepseek-ai/dsh-bash-sandbox": { "optional": true },
-    "@deepseek-ai/dsh-fs": { "optional": true },
-    "@deepseek-ai/dsh-fs-sandbox": { "optional": true },
-    "@deepseek-ai/dsh-pwsh-sandbox": { "optional": true },
-    "@deepseek-ai/dsh-sandbox": { "optional": true },
-    "@deepseek-ai/dsh-sandbox-local": { "optional": true },
-    "@deepseek-ai/dsh-shell": { "optional": true },
-    "@deepseek-ai/dsh-subprocess": { "optional": true },
-    "@deepseek-ai/dsh-subprocess-local": { "optional": true },
-    "@deepseek-ai/dsh-tool-bash": { "optional": true },
-    "zod": { "optional": true }
+    "@deepseek-ai/dsh-api-gateway": { "optional": true },
+    "@deepseek-ai/dsh-client-connection": { "optional": true },
+    "@deepseek-ai/dsh-typert-registry": { "optional": true }
   },
   "exports": {
     ".": "./index.js",
-    "./exec": "./exec.js",
-    "./subprocess": "./subprocess.js",
-    "./sandbox": "./sandbox.js",
-    "./fs": "./fs.js",
-    "./shell": "./shell.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg",
@@ -62,19 +39,11 @@
   },
   "files": [
     "index.js",
-    "exec.js",
-    "subprocess.js",
-    "sandbox.js",
-    "fs.js",
-    "shell.js",
     "client.js",
     "lib/**/*.js",
     "server/agent.mjs",
     "server/launch.sh",
     "server/dsh-harness.sh",
-    "server/exec/package.json",
-    "server/exec/bridge.mjs",
-    "server/exec/helper/*",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
