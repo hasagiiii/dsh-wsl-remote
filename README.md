@@ -12,6 +12,54 @@ WSL remote connections for DeepSeek Harness, modelled on the Codex desktop app's
 | Sign-in | Windows credential store | **shared with Windows** (default) or separate |
 | Opens in | the app | right-sidebar browser tab or system browser |
 
+## Install
+
+### 1. Prepare the WSL distribution
+
+Inside each distribution you want to connect to, install Node.js (nvm works) and `dsh`, then check that your login shell finds it:
+
+```bash
+npm i -g @deepseek-ai/dsh
+bash -lc 'dsh --version'   # 0.2.1-rc.2 or newer; use your own login shell if it is not bash
+```
+
+The distribution must run WSL 2 (`wsl -l -v` on Windows shows the version).
+
+### 2. Install the plugin on Windows
+
+Run these commands in PowerShell. The `dsh` command ships with DeepSeek Harness Desktop.
+
+```powershell
+git clone https://github.com/hasagiiii/dsh-wsl-remote.git
+cd dsh-wsl-remote
+dsh plugin --profile desktop add .
+```
+
+`add .` links the directory into the Desktop profile (`%USERPROFILE%\.dsh\profiles\desktop`) and adds `@local/dsh-wsl-remote` to its bundle list. Open DeepSeek Harness Desktop at least once before running it, so the profile exists.
+
+pnpm may print a warning that the linked package will not resolve `@deepseek-ai/cordis` and `@deepseek-ai/schemastery` from the profile. You can ignore it: DeepSeek Harness provides both packages when it loads the plugin. Do not switch to `file:`, because that installs a copy and your later `git pull` would no longer reach the app.
+
+### 3. Restart DeepSeek Harness
+
+Quit DeepSeek Harness fully and reopen it. Then go to Settings → General → **WSL remote connections**.
+
+### Update
+
+```powershell
+cd dsh-wsl-remote
+git pull
+```
+
+Then restart DeepSeek Harness. Because the plugin is linked, you don't need to run `add` again. The next connect deploys the new agent into each distribution.
+
+### Uninstall
+
+```powershell
+dsh plugin --profile desktop remove @local/dsh-wsl-remote
+```
+
+Restart DeepSeek Harness. To also remove the files left in each distribution, run `rm -rf ~/.dsh-wsl-remote` inside it. The WSL `dsh` and its `~/.dsh` are yours and are not touched.
+
 ## Use
 
 Go to Settings → General → **WSL remote connections**:

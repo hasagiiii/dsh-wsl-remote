@@ -12,6 +12,54 @@ DeepSeek Harness 的 WSL 远程连接，方案与 Codex 桌面版的「WSL remot
 | 登录 | Windows 凭据存储 | **与 Windows 共享**（默认），或独立登录 |
 | 打开位置 | 应用本身 | 右侧边栏浏览器标签页，或系统浏览器 |
 
+## 安装
+
+### 1. 准备 WSL 发行版
+
+在每个要连接的发行版中安装 Node.js（支持 nvm）和 `dsh`，并确认登录 Shell 能找到它：
+
+```bash
+npm i -g @deepseek-ai/dsh
+bash -lc 'dsh --version'   # 需要 0.2.1-rc.2 或更高版本；登录 Shell 不是 bash 时换成你自己的
+```
+
+发行版必须是 WSL 2（在 Windows 上运行 `wsl -l -v` 查看版本）。
+
+### 2. 在 Windows 上安装插件
+
+在 PowerShell 中运行以下命令。`dsh` 命令随 DeepSeek Harness 桌面版一起安装。
+
+```powershell
+git clone https://github.com/hasagiiii/dsh-wsl-remote.git
+cd dsh-wsl-remote
+dsh plugin --profile desktop add .
+```
+
+`add .` 会把该目录链接到桌面版配置（`%USERPROFILE%\.dsh\profiles\desktop`），并把 `@local/dsh-wsl-remote` 加入它的 bundle 列表。运行前请至少打开过一次 DeepSeek Harness 桌面版，确保该配置已经存在。
+
+pnpm 可能会警告：链接进来的包不会从配置目录解析 `@deepseek-ai/cordis` 和 `@deepseek-ai/schemastery`。这个警告可以忽略，DeepSeek Harness 加载插件时会提供这两个包。不要按提示改用 `file:`：那样安装的是一份副本，之后 `git pull` 的更新不会生效。
+
+### 3. 重启 DeepSeek Harness
+
+完全退出 DeepSeek Harness 后重新打开，然后进入 设置 → 通用 → **WSL 远程连接**。
+
+### 更新
+
+```powershell
+cd dsh-wsl-remote
+git pull
+```
+
+然后重启 DeepSeek Harness。插件是链接安装的，不需要再运行 `add`。下次连接时，新的 agent 会自动部署到各个发行版。
+
+### 卸载
+
+```powershell
+dsh plugin --profile desktop remove @local/dsh-wsl-remote
+```
+
+然后重启 DeepSeek Harness。如果还想清理各发行版里留下的文件，在发行版中运行 `rm -rf ~/.dsh-wsl-remote`。WSL 中的 `dsh` 及其 `~/.dsh` 属于你自己，不会被改动。
+
 ## 使用
 
 打开 设置 → 通用 → **WSL 远程连接**：
