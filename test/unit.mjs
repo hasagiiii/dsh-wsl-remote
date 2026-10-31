@@ -21,6 +21,8 @@ import { parseRequest } from '../lib/requests.js';
 import { applyWorkspaceFrame, distroOfPath, emptyWorkspaceState, insertBefore, mergeWorkspaces, requestSessionHints, sessionHints, splitBytes, toHostArgs, wslSummary, baselineFrames } from '../lib/bridge/merge.js';
 import { fromUncPath, toUncPath } from '../lib/linux-fs.js';
 import { comparePlugins, wslInstallSpec } from '../lib/plugins.js';
+import { PluginInstalls, STALL_MS } from '../lib/installs.js';
+import { EventEmitter } from 'node:events';
 
 let failures = 0;
 async function test(name, body) {
@@ -286,6 +288,52 @@ await test('plugins: where each one is installed, and how a Windows one installs
   assert.equal(wslInstallSpec({ name: 'x', source: 'file:C:\\work\\x' }), 'file:/mnt/c/work/x');
   assert.equal(wslInstallSpec({ name: 'x', source: 'link:\\\\server\\share\\x' }), 'x', 'a UNC folder falls back to the registry name');
   assert.equal(wslInstallSpec({ name: 'x' }), 'x');
+});
+
+await test('plugin installs: background job with live output, stall notice and cancel', async () => {
+  let now = 1_000_000;
+  const events = new EventEmitter();
+  const calls = [];
+  let finishInstall;
+  const client = {
+    call: async (endpoint, { args }) => {
+      calls.push([endpoint, args]);
+      if (endpoint === 'pluginManager/installBundle') return new Promise((resolve) => { finishInstall = resolve; });
+      if (endpoint === 'pluginManager/cancelInstall') return { ok: true, value: { status: 'cancelled' } };
+      return { ok: false, error: { code: 'x', message: 'x' } };
+    },
+  };
+  const installs = new PluginInstalls({ client: async () => client, events, now: () => now });
+  const job = installs.start('Ubuntu', 'dsh-x@1');
+  assert.equal(job.status, 'running');
+  assert.throws(() => installs.start('Ubuntu', 'dsh-y'), /already running/, 'one install per distribution at a time');
+  await new Promise((resolve) => setImmediate(resolve));
+  const [endpoint, args] = calls[0];
+  assert.equal(endpoint, 'pluginManager/installBundle');
+  assert.equal(args.options.requestId, job.id, 'the job id is the plugin manager request id');
+  events.emit('plugin-install', { distro: 'Ubuntu', event: 'plugin-manager/install-state', value: { requestId: job.id, phase: 'installing' } });
+  events.emit('plugin-install', { distro: 'Ubuntu', event: 'plugin-manager/install-log', value: { requestId: job.id, text: 'Progress: resolved 1\nDone in 1.5s\n' } });
+  events.emit('plugin-install', { distro: 'Ubuntu', event: 'plugin-manager/install-log', value: { requestId: 'someone-else', text: 'not ours' } });
+  let seen = installs.get(job.id);
+  assert.equal(seen.phase, 'installing');
+  assert.deepEqual(seen.lines, ['Progress: resolved 1', 'Done in 1.5s']);
+  assert.equal(seen.stalled, false);
+  now += STALL_MS + 1;
+  assert.equal(installs.get(job.id).stalled, true, 'silent past the bound: stalled');
+  seen = await installs.cancel(job.id);
+  assert.deepEqual(calls[1], ['pluginManager/cancelInstall', { requestId: job.id }]);
+  assert.equal(seen.cancelRequested, 'cancelled');
+  finishInstall({ ok: true, value: { application: 'cancelled', changed: false } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(installs.get(job.id).status, 'cancelled');
+  assert.equal(installs.latest('Ubuntu').id, job.id);
+  const next = installs.start('Ubuntu', 'dsh-y');
+  await new Promise((resolve) => setImmediate(resolve));
+  finishInstall({ ok: true, value: { application: 'applied', bundle: 'dsh-y' } });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(installs.get(next.id).status, 'done');
+  installs.dispose();
+  assert.equal(events.listenerCount('plugin-install'), 0);
 });
 
 await test('settings: invalid fields are dropped', () => {

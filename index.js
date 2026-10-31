@@ -29,6 +29,7 @@ import { createLinuxDirectory, listLinuxDirectory, parseOsRelease, toUncPath } f
 import { WslBridge, wrapFetchRoutes, wrapGateway } from './lib/bridge/bridge.js';
 import { RouteForwarder } from './lib/bridge/routes.js';
 import { comparePlugins } from './lib/plugins.js';
+import { PluginInstalls } from './lib/installs.js';
 
 const packageDir = dirname(fileURLToPath(import.meta.url));
 const ROUTE = '/api/local-wsl-remote';
@@ -158,6 +159,9 @@ export default class WslRemoteService extends Service {
       this.bridge.start();
       return () => this.bridge.stop();
     }, 'wsl-remote: WSL session bridge');
+    // Plugin installs into a distribution, as background jobs the WSL plugins panel polls.
+    this.installs = new PluginInstalls({ client: (distro) => this.bridge.client(distro), events: this.bridge });
+    ctx.effect(() => () => this.installs.dispose(), 'wsl-remote: plugin installs');
     ctx.inject(['typertGateway'], (scope) => {
       scope.effect(() => wrapGateway(scope.typertGateway, this.bridge), 'wsl-remote: Gateway merge');
     });
@@ -265,21 +269,38 @@ export default class WslRemoteService extends Service {
         return this.pluginsOf(distro);
       });
       // Manage a distribution's plugins from this window, through that dsh's own plugin manager.
+      // Enable/disable/remove answer at once; an install runs as a background job (plugins/install).
       route('plugins/change', ['POST'], async (request) => {
-        const { distro, action, name, spec, enabled } = await body(request);
+        const { distro, action, name, enabled } = await body(request);
         await this.known(distro);
         const calls = {
           enable: () => ['pluginManager/setBundleEnabled', { name, enabled: enabled !== false }],
           remove: () => ['pluginManager/removeBundle', { name }],
-          install: () => ['pluginManager/installBundle', { spec, options: { enabled: true } }],
         };
         if (!(action in calls)) throw new Error(`unknown plugin action ${String(action)}`);
-        if (action === 'install' ? typeof spec !== 'string' || !spec.trim() : typeof name !== 'string' || !name) throw new Error('a plugin name or install spec is required');
+        if (typeof name !== 'string' || !name) throw new Error('a plugin name is required');
         const [endpoint, args] = calls[action]();
         const client = await this.bridge.client(distro);
         const result = await client.call(endpoint, { args });
         if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
         return { result: result.value, ...(await this.pluginsOf(distro)) };
+      });
+      // Start installing a plugin into a distribution; poll plugins/install-status, stop with plugins/install-cancel.
+      route('plugins/install', ['POST'], async (request) => {
+        const { distro, spec } = await body(request);
+        await this.known(distro);
+        if (typeof spec !== 'string' || !spec.trim()) throw new Error('an install spec is required');
+        return { job: this.installs.start(distro, spec.trim()) };
+      });
+      route('plugins/install-status', ['POST'], async (request) => {
+        const { id, distro } = await body(request);
+        const job = typeof id === 'string' ? this.installs.get(id) : typeof distro === 'string' ? this.installs.latest(distro) : undefined;
+        return { job: job ?? null };
+      });
+      route('plugins/install-cancel', ['POST'], async (request) => {
+        const { id } = await body(request);
+        if (typeof id !== 'string') throw new Error('an installation id is required');
+        return { job: await this.installs.cancel(id) };
       });
       // Restart a distribution's dsh so plugin changes that wait for a restart take effect.
       route('restart', ['POST'], async (request) => {

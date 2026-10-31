@@ -60,6 +60,41 @@ try {
   console.log('   result:', JSON.stringify(on.result).slice(0, 300));
   assert.equal(on.plugins.find((plugin) => plugin.name === bundle)?.enabled, true);
 
+  // Install a Windows-only plugin into WSL as a background job, then remove it again.
+  const candidate = listed.windowsOnly[0];
+  if (candidate !== undefined) {
+    const poll = async (id, until) => {
+      for (let i = 0; i < 120; i++) {
+        const { job } = await post('plugins/install-status', { id });
+        if (until(job)) return job;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      throw new Error('the installation did not reach the expected state');
+    };
+    step(`install ${candidate.installSpec} and cancel it at once`);
+    const started = (await post('plugins/install', { distro, spec: candidate.installSpec })).job;
+    assert.equal(started.status, 'running');
+    const cancelled = (await post('plugins/install-cancel', { id: started.id })).job;
+    console.log('   cancel request:', cancelled.cancelRequested);
+    const afterCancel = await poll(started.id, (job) => job.status !== 'running');
+    console.log(`   cancel outcome: ${afterCancel.status} (${afterCancel.result?.application ?? afterCancel.error})`);
+    if (afterCancel.status === 'done') await post('plugins/change', { distro, action: 'remove', name: candidate.name });
+    assert.ok(!(await post('plugins', { distro })).plugins.some((plugin) => plugin.name === candidate.name), 'cancelled: not installed');
+
+    step(`install ${candidate.installSpec} to completion`);
+    const job = (await post('plugins/install', { distro, spec: candidate.installSpec })).job;
+    const done = await poll(job.id, (value) => value.status !== 'running');
+    console.log(`   ${done.status} in ${Math.round(done.elapsedMs / 100) / 10}s, phase ${done.phase}, ${done.lines.length} log lines; last: ${done.lines.at(-1)}`);
+    assert.equal(done.status, 'done', done.error ?? JSON.stringify(done.result));
+    assert.ok(done.lines.some((line) => /Done in/.test(line)), 'pnpm output reached the job');
+    const installed = await post('plugins', { distro });
+    assert.ok(installed.plugins.some((plugin) => plugin.name === candidate.name), 'installed in WSL');
+
+    step(`remove ${candidate.name} again`);
+    const removed = await post('plugins/change', { distro, action: 'remove', name: candidate.name });
+    assert.ok(!removed.plugins.some((plugin) => plugin.name === candidate.name), 'removed from WSL');
+  }
+
   await wsl.connection(distro).disconnect();
   console.log('PLUGINS REHEARSAL PASSED');
 } catch (error) {

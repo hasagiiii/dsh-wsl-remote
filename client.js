@@ -103,6 +103,22 @@ window.__ModuleLoader__.load({
         'plugins.failed': '操作失败：{message}',
         'plugins.disabled': '已停用',
         'plugins.openUi': '在 WSL dsh 自己的界面中管理',
+        'plugins.installing': '安装 {spec}',
+        'plugins.phase.starting': '启动中',
+        'plugins.phase.installing': '下载安装中',
+        'plugins.phase.applying': '应用中',
+        'plugins.phase.cancelling': '取消中',
+        'plugins.status.done': '已完成',
+        'plugins.status.failed': '失败',
+        'plugins.status.cancelled': '已取消',
+        'plugins.cancel': '取消安装',
+        'plugins.cancelling': '正在取消…',
+        'plugins.close': '关闭',
+        'plugins.stalled': 'pnpm 已经 {seconds} 秒没有输出，可能卡住了。可以取消安装（会还原配置）后重试，或改在 WSL dsh 自己的界面里安装。',
+        'plugins.tooLate': '已进入应用阶段，无法取消，请等待完成。',
+        'plugins.waitingOutput': '等待 pnpm 输出…',
+        'plugins.installed': '已安装 {name}。',
+        'plugins.cancelled': '已取消安装，WSL 的配置已还原。',
       },
       en: {
         'title': 'WSL remote connections',
@@ -200,6 +216,22 @@ window.__ModuleLoader__.load({
         'plugins.failed': 'Failed: {message}',
         'plugins.disabled': 'disabled',
         'plugins.openUi': 'Manage in the WSL dsh’s own UI',
+        'plugins.installing': 'Installing {spec}',
+        'plugins.phase.starting': 'starting',
+        'plugins.phase.installing': 'installing',
+        'plugins.phase.applying': 'applying',
+        'plugins.phase.cancelling': 'cancelling',
+        'plugins.status.done': 'done',
+        'plugins.status.failed': 'failed',
+        'plugins.status.cancelled': 'cancelled',
+        'plugins.cancel': 'Cancel install',
+        'plugins.cancelling': 'Cancelling…',
+        'plugins.close': 'Close',
+        'plugins.stalled': 'pnpm has printed nothing for {seconds} s and may be stuck. Cancel the install (the profile is restored) and retry, or install from the WSL dsh’s own UI.',
+        'plugins.tooLate': 'The install is being applied and can no longer be cancelled; wait for it to finish.',
+        'plugins.waitingOutput': 'Waiting for pnpm output…',
+        'plugins.installed': 'Installed {name}.',
+        'plugins.cancelled': 'Install cancelled; the WSL profile was restored.',
       },
     };
 
@@ -248,6 +280,9 @@ window.__ModuleLoader__.load({
       .lwr-tag[data-where=wsl]{background:rgba(34,197,94,.14);color:#15803d}
       .lwr-tag[data-where=both-differ],.lwr-tag[data-where=windows]{background:rgba(245,158,11,.16);color:#b45309}
       .lwr-plugin-install{display:flex;gap:6px;margin-top:4px}
+      .lwr-job{display:flex;flex-direction:column;gap:6px;margin-top:6px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px}
+      .lwr-job-head{display:flex;align-items:center;gap:8px}
+      .lwr-job-log{margin:0;max-height:160px;overflow:auto;padding:6px 8px;border-radius:6px;background:var(--dsw-alias-bg-layer-2, rgba(127,127,127,.08));font:11px/1.45 var(--ds-font-family-code, ui-monospace, monospace);white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary)}
       .lwr-plugin-install .lwr-input{flex:1;width:auto}`;
 
     function format(text, values) {
@@ -1005,6 +1040,28 @@ window.__ModuleLoader__.load({
           return plugin.name;
         };
 
+        /** One installation into WSL: phase, elapsed time, live pnpm output, cancel, and a stall notice. */
+        function InstallJob({ job, onCancel, onClose }) {
+          const tr = useT();
+          const logRef = React.useRef(null);
+          React.useEffect(() => {
+            if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+          }, [job.lines.length]);
+          const running = job.status === 'running';
+          const seconds = Math.round(job.elapsedMs / 1000);
+          const phase = ['starting', 'installing', 'applying', 'cancelling'].includes(job.phase) ? tr(`plugins.phase.${job.phase}`) : job.phase;
+          return h('div', { className: 'lwr-job', role: 'status', 'aria-live': 'polite' },
+            h('div', { className: 'lwr-job-head' },
+              h('span', { className: 'lwr-plugin-name' }, tr('plugins.installing', { spec: job.spec })),
+              h('span', { className: 'lwr-tag' }, running ? `${phase} · ${seconds}s` : tr(`plugins.status.${job.status}`)),
+              h('span', { style: { flex: 1 } }),
+              running && h('button', { type: 'button', className: 'lwr-button', disabled: Boolean(job.cancelRequested), onClick: onCancel }, tr(job.cancelRequested ? 'plugins.cancelling' : 'plugins.cancel')),
+              !running && h('button', { type: 'button', className: 'lwr-button', onClick: onClose }, tr('plugins.close'))),
+            job.stalled && running && !job.cancelRequested && h('div', { className: 'lwr-alert' }, tr('plugins.stalled', { seconds: Math.round(job.silentMs / 1000) })),
+            job.cancelRequested === 'too-late' && h('div', { className: 'lwr-note' }, tr('plugins.tooLate')),
+            h('pre', { ref: logRef, className: 'lwr-job-log' }, job.lines.length > 0 ? job.lines.join('\n') : tr('plugins.waitingOutput')));
+        }
+
         /** The plugins of one distribution's dsh, marked against Windows, managed through that dsh's plugin manager. */
         function Plugins({ host }) {
           const tr = useT();
@@ -1012,6 +1069,7 @@ window.__ModuleLoader__.load({
           const [busy, setBusy] = React.useState(undefined);
           const [notice, setNotice] = React.useState(undefined);
           const [spec, setSpec] = React.useState('');
+          const [job, setJob] = React.useState(undefined);
           const load = React.useCallback(async () => {
             try {
               setState({ status: 'ready', value: await call('api/local-wsl-remote/plugins', { method: 'POST', body: JSON.stringify({ distro: host.name }) }) });
@@ -1021,7 +1079,56 @@ window.__ModuleLoader__.load({
           }, [host.name]);
           React.useEffect(() => {
             load();
-          }, [load]);
+            // An installation started earlier (another window, a reload) is picked up again.
+            call('api/local-wsl-remote/plugins/install-status', { method: 'POST', body: JSON.stringify({ distro: host.name }) })
+              .then((value) => { if (value.job?.status === 'running') setJob(value.job); })
+              .catch(() => {});
+          }, [load, host.name]);
+          // Poll a running installation; when it ends, reload the list and report its outcome.
+          React.useEffect(() => {
+            if (job?.status !== 'running') return undefined;
+            let stopped = false;
+            const timer = setTimeout(async () => {
+              try {
+                const value = await call('api/local-wsl-remote/plugins/install-status', { method: 'POST', body: JSON.stringify({ id: job.id }) });
+                if (stopped || value.job === null) return;
+                setJob(value.job);
+                if (value.job.status !== 'running') {
+                  await load();
+                  const result = value.job.result;
+                  if (value.job.status === 'cancelled') setNotice({ kind: 'info', text: tr('plugins.cancelled') });
+                  else if (value.job.status === 'failed') setNotice({ kind: 'error', text: tr('plugins.failed', { message: value.job.error ?? result?.error?.message ?? result?.reason ?? result?.error?.code ?? 'failed' }) });
+                  else if (result?.application === 'restart-required') setNotice({ kind: 'restart' });
+                  else setNotice({ kind: 'info', text: tr('plugins.installed', { name: result?.bundle ?? value.job.spec }) });
+                }
+              } catch (error) {
+                if (!stopped) setNotice({ kind: 'error', text: tr('plugins.failed', { message: error.message }) });
+              }
+            }, 1000);
+            return () => {
+              stopped = true;
+              clearTimeout(timer);
+            };
+          }, [job, load]);
+          const install = async (installSpec) => {
+            setNotice(undefined);
+            try {
+              const value = await call('api/local-wsl-remote/plugins/install', { method: 'POST', body: JSON.stringify({ distro: host.name, spec: installSpec }) });
+              setJob(value.job);
+              setSpec('');
+            } catch (error) {
+              setNotice({ kind: 'error', text: tr('plugins.failed', { message: error.message }) });
+            }
+          };
+          const cancel = async () => {
+            if (job === undefined) return;
+            try {
+              setJob((await call('api/local-wsl-remote/plugins/install-cancel', { method: 'POST', body: JSON.stringify({ id: job.id }) })).job);
+            } catch (error) {
+              setNotice({ kind: 'error', text: tr('plugins.failed', { message: error.message }) });
+            }
+          };
+          const installing = job?.status === 'running';
           const change = async (key, payload) => {
             setBusy(key);
             setNotice(undefined);
@@ -1032,7 +1139,6 @@ window.__ModuleLoader__.load({
               if (application === 'failed' || value.result?.status === 'refused') setNotice({ kind: 'error', text: tr('plugins.failed', { message: value.result?.error?.message ?? value.result?.reason ?? value.result?.error?.code ?? application }) });
               else if (application === 'restart-required') setNotice({ kind: 'restart' });
               else setNotice({ kind: 'info', text: tr('plugins.applied') });
-              if (payload.action === 'install') setSpec('');
             } catch (error) {
               setNotice({ kind: 'error', text: tr('plugins.failed', { message: error.message }) });
             } finally {
@@ -1086,9 +1192,9 @@ window.__ModuleLoader__.load({
                 h('button', {
                   type: 'button',
                   className: 'lwr-button',
-                  disabled: busy !== undefined,
+                  disabled: busy !== undefined || installing,
                   title: plugin.installSpec,
-                  onClick: () => change(`install:${plugin.name}`, { action: 'install', spec: plugin.installSpec }),
+                  onClick: () => install(plugin.installSpec),
                 }, tr('plugins.installHere'))))),
             value && h('div', { className: 'lwr-plugin-install' },
               h('input', {
@@ -1097,13 +1203,14 @@ window.__ModuleLoader__.load({
                 spellCheck: false,
                 placeholder: tr('plugins.spec'),
                 'aria-label': tr('plugins.spec'),
-                disabled: busy !== undefined,
+                disabled: busy !== undefined || installing,
                 onChange: (event) => setSpec(event.target.value),
                 onKeyDown: (event) => {
-                  if (event.key === 'Enter' && spec.trim()) change('install', { action: 'install', spec: spec.trim() });
+                  if (event.key === 'Enter' && spec.trim()) install(spec.trim());
                 },
               }),
-              h('button', { type: 'button', className: 'lwr-button', disabled: busy !== undefined || !spec.trim(), onClick: () => change('install', { action: 'install', spec: spec.trim() }) }, tr('plugins.install'))),
+              h('button', { type: 'button', className: 'lwr-button', disabled: busy !== undefined || installing || !spec.trim(), onClick: () => install(spec.trim()) }, tr('plugins.install'))),
+            job && h(InstallJob, { job, onCancel: cancel, onClose: () => setJob(undefined) }),
             notice?.kind === 'restart' && h('div', { className: 'lwr-info' }, tr('plugins.restartNeeded'),
               ' ',
               h('button', { type: 'button', className: 'lwr-button', 'data-primary': '', disabled: busy !== undefined, onClick: restart }, tr('plugins.restart'))),
