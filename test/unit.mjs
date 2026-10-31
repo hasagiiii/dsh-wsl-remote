@@ -20,6 +20,7 @@ import { dshRequirement, requirementMessage } from '../lib/requirements.js';
 import { parseRequest } from '../lib/requests.js';
 import { applyWorkspaceFrame, distroOfPath, emptyWorkspaceState, insertBefore, mergeWorkspaces, requestSessionHints, sessionHints, splitBytes, toHostArgs, wslSummary, baselineFrames } from '../lib/bridge/merge.js';
 import { fromUncPath, toUncPath } from '../lib/linux-fs.js';
+import { comparePlugins, wslInstallSpec } from '../lib/plugins.js';
 
 let failures = 0;
 async function test(name, body) {
@@ -258,6 +259,33 @@ await test('bridge: a WSL workspace just added is routable before its follow str
   assert.deepEqual(calls[1], ['session/create', { request: { workspaceId: 'l9' } }]);
   assert.deepEqual(bridge.merged().baseline.items[0].sessionIds, ['ws-new'], 'the new session is listed in its workspace at once');
   assert.deepEqual(bridge.workspaceHosts(), { l9: 'Ubuntu' });
+});
+
+await test('plugins: where each one is installed, and how a Windows one installs in WSL', () => {
+  const wsl = [
+    { name: '@deepseek-ai/dsh-base', availability: 'installation', installed: false, version: '0.2.1', enabled: true },
+    { name: 'dsh-better-sidebar', availability: 'profile', installed: true, version: '0.28.1', enabled: true, removable: true, source: 'dsh-better-sidebar@^0.28.1' },
+    { name: 'dsh-vscode-mode', availability: 'profile', installed: true, version: '0.19.2', enabled: false, removable: true },
+    { name: 'same', availability: 'profile', installed: true, version: '1.0.0', enabled: true },
+  ];
+  const windows = [
+    { name: '@deepseek-ai/dsh-base', availability: 'installation', installed: false, version: '0.2.1' },
+    { name: 'dsh-better-sidebar', availability: 'profile', installed: true, version: '0.28.2', source: 'dsh-better-sidebar@^0.28.2' },
+    { name: 'same', availability: 'profile', installed: true, version: '1.0.0' },
+    { name: 'dsh-llm-tencent-intranet', availability: 'profile', installed: true, version: '2.0.2', source: 'link:F:/proj/dsh-llm-tencent-intranet' },
+    { name: '@local/dsh-wsl-remote', availability: 'profile', installed: true, version: '4.0.0', source: 'link:F:/proj/dsh-wsl-remote' },
+  ];
+  const { plugins, windowsOnly } = comparePlugins(wsl, windows);
+  assert.deepEqual(plugins.map((plugin) => [plugin.name, plugin.where, plugin.windows?.version ?? null, plugin.enabled]), [
+    ['dsh-better-sidebar', 'both-differ', '0.28.2', true],
+    ['dsh-vscode-mode', 'wsl', null, false],
+    ['same', 'both', '1.0.0', true],
+  ], 'shipped bundles are left out');
+  assert.deepEqual(windowsOnly.map((plugin) => [plugin.name, plugin.installSpec]), [['dsh-llm-tencent-intranet', 'link:/mnt/f/proj/dsh-llm-tencent-intranet']], 'this plugin itself is never offered to WSL');
+  assert.equal(wslInstallSpec({ name: 'x', source: 'x@^1.2.0' }), 'x@^1.2.0');
+  assert.equal(wslInstallSpec({ name: 'x', source: 'file:C:\\work\\x' }), 'file:/mnt/c/work/x');
+  assert.equal(wslInstallSpec({ name: 'x', source: 'link:\\\\server\\share\\x' }), 'x', 'a UNC folder falls back to the registry name');
+  assert.equal(wslInstallSpec({ name: 'x' }), 'x');
 });
 
 await test('settings: invalid fields are dropped', () => {

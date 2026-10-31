@@ -75,6 +75,16 @@ The folder is registered as **a workspace of that distribution's dsh**: it appea
 
 A `\\wsl.localhost\…` workspace added by an earlier version is merged with the WSL workspace of the same folder into one row, shown with the Linux path. New sessions in it run in the WSL dsh; old sessions that ran on Windows stay where they are.
 
+### Plugins: which side has what
+
+A WSL session's agent (tools, skills, MCP servers, model providers) runs on the plugins installed in the WSL dsh; the interface of this window, and its own plugin page, are always the Windows ones. **WSL plugins** next to a connected distribution in Settings → General lists that dsh's plugins, each marked:
+
+- **WSL only**: WSL sessions have it, Windows sessions do not;
+- **Windows has x.y.z**: installed on both sides, in different versions;
+- **also on Windows**: installed on both sides, same version.
+
+Below them, **Installed on Windows only** lists the plugins WSL sessions do not have. From the panel you can enable, disable and remove WSL plugins, install one by name or spec, or **Install in WSL** a Windows-only one (a plugin linked from a Windows folder is linked through `/mnt/<drive>/…`). The changes run through the WSL dsh's own plugin manager; when one waits for a restart, the panel offers to restart the dsh in WSL. **Manage in the WSL dsh's own UI** opens its full plugin page.
+
 ### Shared sign-in
 
 With **Share sign-in** on (the default), the agent inside the WSL dsh hands every credential read and write over the `wsl.exe` pipe to the Windows credential store: API keys, DeepSeek account sign-in, and other plugins' credential records. Each WSL `modifyRecord` runs inside the Windows store's `modifyRecord`, under its cross-process writer lock, so token refreshes on either side never overwrite or invalidate each other. Only the key that signs the WSL dsh's own browser cookies (`client-connection/browser-session`) stays in WSL. With sharing off, the WSL dsh uses its own `~/.dsh/.credentials.yaml`.
@@ -156,7 +166,8 @@ Results are remembered, so each id is resolved once. A workspace or session a di
 - The WSL dsh must be the same release as DeepSeek Harness on Windows: merged sessions speak the Windows side's Remote API.
 - The merge wraps DeepSeek Harness's internal Gateway dispatch (`dispatchRpc`, `openWireStream`), the Connection's exact route table, the web server's route tables and the model picker's per-session directory, so a DSH upgrade may need a plugin update (`engines.dsh`). Ownership is inferred from ids (see above), not declared by the window as Codex's `hostId` is.
 - While a distribution is disconnected, its sessions stay listed with their last known state, and opening one reconnects it. Running streams break and the DSH client reconnects them as usual.
-- Only session-related events are merged. The WSL dsh's settings, plugin manager and account pages do not appear in the Windows window; open the WSL dsh's own UI for those.
+- Only session-related events are merged. The WSL dsh's settings and account pages do not appear in the Windows window; its plugins are managed from the WSL plugins panel (see above) or its own UI.
+- Known issue: installing a plugin from the panel can hang. The WSL dsh's plugin manager has written the dependency (its pnpm log ends with `Done`), but its pnpm process does not exit, so the install stays pending until the plugin manager's 10-minute idle timeout ends it and restores the profile. The same `pnpm add` run in a WSL terminal exits at once. Until this is solved, install from the WSL dsh's own UI or with `dsh plugin --profile web add <spec>` in WSL; listing, enabling, disabling and removing are not affected.
 - A plugin's sidebar works for WSL sessions only when the same plugin is installed in the WSL dsh too; otherwise its WSL requests fail. A plugin route that names no session (shared assets, global settings) is always answered by Windows.
 - "Open in app" opens a WSL file on Windows through `\\wsl.localhost` (9P).
 - The workspace row has no extension slot for plugins, so the WSL badge is placed into the sidebar page; a change to the DSH sidebar structure may need a plugin update.
@@ -185,8 +196,12 @@ $env:DSH_HOME = $h; $env:DSH_TELEMETRY_DISABLED = '1'; $env:DSH_CLIENT_VERSION =
 & $dsh --expose-internals --import ./test/resolve-boot.mjs test/boot-desktop.mjs "$h\profiles\desktop" (Get-Location).Path Ubuntu-26.04
 # a WSL session's plugin routes, its distribution's model catalog, process-group cleanup on disconnect
 & $dsh --expose-internals --import ./test/resolve-boot.mjs test/boot-wsl-session.mjs "$h\profiles\desktop" Ubuntu-26.04
+# a distribution's plugins listed against Windows; disable and re-enable one through the panel's routes
+& $dsh --expose-internals --import ./test/resolve-boot.mjs test/boot-wsl-plugins.mjs "$h\profiles\desktop" Ubuntu-26.04 dsh-vscode-mode
 # keep the composition running with its web UI, to drive the real client in a browser
 & $dsh --expose-internals --import ./test/resolve-boot.mjs test/serve-desktop.mjs "$h\profiles\desktop" Ubuntu-26.04
+# then, with a headless Chrome on --remote-debugging-port=9333, run steps against the page
+& $dsh test/cdp.mjs 9333 <steps.mjs>
 ```
 
 Bump `AGENT_VERSION` in `lib/remote.js` when `server/agent.mjs`, `server/launch.sh`, `server/dsh-harness.sh` or `lib/mux.js` change.

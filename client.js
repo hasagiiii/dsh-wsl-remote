@@ -80,6 +80,29 @@ window.__ModuleLoader__.load({
         'badge.title': 'WSL 工作区 · {distro}（{os}）· {state}',
         'badge.titleNoOs': 'WSL 工作区 · {distro} · {state}',
         'open.done': '已从 WSL 打开：{path}',
+        'plugins.toggle': 'WSL 插件',
+        'plugins.title': '{distro} 中的插件',
+        'plugins.desc': 'WSL 会话的 Agent 侧（工具、技能、MCP、模型）用这里的插件；界面和这个窗口的插件管理页始终是 Windows 的。插件的侧边栏要在 WSL 会话里可用，两边都要装。',
+        'plugins.loading': '正在读取 WSL 中的插件…',
+        'plugins.empty': '没有安装插件。',
+        'plugins.where.wsl': '仅 WSL',
+        'plugins.where.both': 'Windows 也已安装',
+        'plugins.where.both-differ': 'Windows 为 {version}',
+        'plugins.where.windows': '仅 Windows',
+        'plugins.windowsOnly': '仅装在 Windows 的插件（WSL 会话的 Agent 用不到；其侧边栏在 WSL 会话里不可用）：',
+        'plugins.enable': '启用',
+        'plugins.disable': '停用',
+        'plugins.remove': '卸载',
+        'plugins.installHere': '装到 WSL',
+        'plugins.install': '安装',
+        'plugins.spec': '包名或安装地址，例如 dsh-better-sidebar',
+        'plugins.removeConfirm': '从 {distro} 卸载 {name}？',
+        'plugins.restartNeeded': 'WSL 中的 dsh 需要重启才能应用这些更改。',
+        'plugins.restart': '重启 WSL 中的 dsh',
+        'plugins.applied': '已应用。',
+        'plugins.failed': '操作失败：{message}',
+        'plugins.disabled': '已停用',
+        'plugins.openUi': '在 WSL dsh 自己的界面中管理',
       },
       en: {
         'title': 'WSL remote connections',
@@ -154,6 +177,29 @@ window.__ModuleLoader__.load({
         'badge.title': 'WSL workspace · {distro} ({os}) · {state}',
         'badge.titleNoOs': 'WSL workspace · {distro} · {state}',
         'open.done': 'Opened from WSL: {path}',
+        'plugins.toggle': 'WSL plugins',
+        'plugins.title': 'Plugins in {distro}',
+        'plugins.desc': 'The agent side of WSL sessions (tools, skills, MCP, models) uses these plugins; the interface and this window’s plugin page are always the Windows ones. For a plugin’s sidebar to work in WSL sessions, install it on both sides.',
+        'plugins.loading': 'Reading the plugins in WSL…',
+        'plugins.empty': 'No plugins installed.',
+        'plugins.where.wsl': 'WSL only',
+        'plugins.where.both': 'also on Windows',
+        'plugins.where.both-differ': 'Windows has {version}',
+        'plugins.where.windows': 'Windows only',
+        'plugins.windowsOnly': 'Installed on Windows only (WSL sessions’ agents do not have them; their sidebars do not work in WSL sessions):',
+        'plugins.enable': 'Enable',
+        'plugins.disable': 'Disable',
+        'plugins.remove': 'Remove',
+        'plugins.installHere': 'Install in WSL',
+        'plugins.install': 'Install',
+        'plugins.spec': 'Package name or install spec, e.g. dsh-better-sidebar',
+        'plugins.removeConfirm': 'Remove {name} from {distro}?',
+        'plugins.restartNeeded': 'The dsh in WSL needs a restart to apply these changes.',
+        'plugins.restart': 'Restart the dsh in WSL',
+        'plugins.applied': 'Applied.',
+        'plugins.failed': 'Failed: {message}',
+        'plugins.disabled': 'disabled',
+        'plugins.openUi': 'Manage in the WSL dsh’s own UI',
       },
     };
 
@@ -191,7 +237,18 @@ window.__ModuleLoader__.load({
       .lwr-cmd{display:flex;align-items:center;gap:6px;padding:4px 4px 4px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-2, rgba(127,127,127,.08))}
       .lwr-cmd code{flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);overflow-wrap:anywhere;user-select:all}
       .lwr-copy{height:22px;padding:0 8px;font-size:11px}
-    `;
+      .lwr-host-wrap{display:flex;flex-direction:column;border:1px solid var(--dsw-alias-border-l1);border-radius:10px;background:var(--dsw-alias-bg-layer-1)}
+      .lwr-host-wrap>.lwr-host{border:none;background:transparent}
+      .lwr-plugins{margin:0 12px 12px;padding-top:10px;border-top:.5px solid var(--dsw-alias-border-l2);display:flex;flex-direction:column;gap:6px}
+      .lwr-plugin{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:30px}
+      .lwr-plugin-name{font-size:13px;color:var(--dsw-alias-label-primary);white-space:nowrap}
+      .lwr-plugin-version{margin-left:6px;font-size:11px;color:var(--dsw-alias-label-secondary)}
+      .lwr-plugin .lwr-text{min-width:0;flex:1}
+      .lwr-tag{display:inline-flex;align-items:center;height:18px;margin-left:6px;padding:0 6px;border-radius:9px;font-size:11px;line-height:18px;white-space:nowrap;vertical-align:middle;background:var(--dsw-alias-bg-layer-2, rgba(127,127,127,.12));color:var(--dsw-alias-label-secondary)}
+      .lwr-tag[data-where=wsl]{background:rgba(34,197,94,.14);color:#15803d}
+      .lwr-tag[data-where=both-differ],.lwr-tag[data-where=windows]{background:rgba(245,158,11,.16);color:#b45309}
+      .lwr-plugin-install{display:flex;gap:6px;margin-top:4px}
+      .lwr-plugin-install .lwr-input{flex:1;width:auto}`;
 
     function format(text, values) {
       return text.replace(/\{(\w+)\}/g, (_m, key) => (values && key in values ? String(values[key]) : `{${key}}`));
@@ -939,10 +996,128 @@ window.__ModuleLoader__.load({
 
         const osLabel = (os) => (os ? [os.name, os.version].filter(Boolean).join(' ') || os.pretty : '');
 
+        const pluginTitle = (plugin) => {
+          const title = plugin.meta?.title;
+          if (title && typeof title === 'object') {
+            const zh = String(document.documentElement.lang || navigator.language || '').toLowerCase().startsWith('zh');
+            return (zh ? title.zh : title.en) ?? title.en ?? title.zh ?? plugin.name;
+          }
+          return plugin.name;
+        };
+
+        /** The plugins of one distribution's dsh, marked against Windows, managed through that dsh's plugin manager. */
+        function Plugins({ host }) {
+          const tr = useT();
+          const [state, setState] = React.useState({ status: 'loading' });
+          const [busy, setBusy] = React.useState(undefined);
+          const [notice, setNotice] = React.useState(undefined);
+          const [spec, setSpec] = React.useState('');
+          const load = React.useCallback(async () => {
+            try {
+              setState({ status: 'ready', value: await call('api/local-wsl-remote/plugins', { method: 'POST', body: JSON.stringify({ distro: host.name }) }) });
+            } catch (error) {
+              setState({ status: 'error', message: error.message });
+            }
+          }, [host.name]);
+          React.useEffect(() => {
+            load();
+          }, [load]);
+          const change = async (key, payload) => {
+            setBusy(key);
+            setNotice(undefined);
+            try {
+              const value = await call('api/local-wsl-remote/plugins/change', { method: 'POST', body: JSON.stringify({ distro: host.name, ...payload }) });
+              setState({ status: 'ready', value });
+              const application = value.result?.application;
+              if (application === 'failed' || value.result?.status === 'refused') setNotice({ kind: 'error', text: tr('plugins.failed', { message: value.result?.error?.message ?? value.result?.reason ?? value.result?.error?.code ?? application }) });
+              else if (application === 'restart-required') setNotice({ kind: 'restart' });
+              else setNotice({ kind: 'info', text: tr('plugins.applied') });
+              if (payload.action === 'install') setSpec('');
+            } catch (error) {
+              setNotice({ kind: 'error', text: tr('plugins.failed', { message: error.message }) });
+            } finally {
+              setBusy(undefined);
+            }
+          };
+          const restart = async () => {
+            setBusy('restart');
+            try {
+              await call('api/local-wsl-remote/restart', { method: 'POST', body: JSON.stringify({ distro: host.name }) });
+              setNotice(undefined);
+              await load();
+            } catch (error) {
+              setNotice({ kind: 'error', text: tr('plugins.failed', { message: error.message }) });
+            } finally {
+              setBusy(undefined);
+            }
+          };
+          const value = state.status === 'ready' ? state.value : undefined;
+          const tag = (where, version) => h('span', { className: 'lwr-tag', 'data-where': where }, tr(`plugins.where.${where}`, { version: version ?? '?' }));
+          return h('div', { className: 'lwr-plugins' },
+            h('div', { className: 'lwr-title' }, tr('plugins.title', { distro: host.name })),
+            h('div', { className: 'lwr-note' }, tr('plugins.desc')),
+            state.status === 'loading' && h('div', { className: 'lwr-note' }, tr('plugins.loading')),
+            state.status === 'error' && h('div', { className: 'lwr-alert', role: 'alert' }, state.message),
+            value && value.plugins.length === 0 && h('div', { className: 'lwr-note' }, tr('plugins.empty')),
+            value && value.plugins.map((plugin) => h('div', { key: plugin.name, className: 'lwr-plugin' },
+              h('div', { className: 'lwr-text' },
+                h('span', { className: 'lwr-plugin-name', title: plugin.name }, pluginTitle(plugin)),
+                plugin.version && h('span', { className: 'lwr-plugin-version' }, plugin.version),
+                tag(plugin.where, plugin.windows?.version),
+                !plugin.enabled && h('span', { className: 'lwr-tag' }, tr('plugins.disabled')),
+                plugin.error && h('div', { className: 'lwr-alert' }, plugin.error)),
+              h('div', { className: 'lwr-actions' },
+                h('button', { type: 'button', className: 'lwr-button', disabled: busy !== undefined, onClick: () => change(`enable:${plugin.name}`, { action: 'enable', name: plugin.name, enabled: !plugin.enabled }) }, tr(plugin.enabled ? 'plugins.disable' : 'plugins.enable')),
+                plugin.removable && h('button', {
+                  type: 'button',
+                  className: 'lwr-button',
+                  disabled: busy !== undefined,
+                  onClick: () => {
+                    if (window.confirm(tr('plugins.removeConfirm', { name: plugin.name, distro: host.name }))) change(`remove:${plugin.name}`, { action: 'remove', name: plugin.name });
+                  },
+                }, tr('plugins.remove'))))),
+            value && value.windowsOnly.length > 0 && h('div', { className: 'lwr-note' }, tr('plugins.windowsOnly')),
+            value && value.windowsOnly.map((plugin) => h('div', { key: `win:${plugin.name}`, className: 'lwr-plugin' },
+              h('div', { className: 'lwr-text' },
+                h('span', { className: 'lwr-plugin-name', title: plugin.name }, pluginTitle(plugin)),
+                plugin.version && h('span', { className: 'lwr-plugin-version' }, plugin.version),
+                tag('windows')),
+              h('div', { className: 'lwr-actions' },
+                h('button', {
+                  type: 'button',
+                  className: 'lwr-button',
+                  disabled: busy !== undefined,
+                  title: plugin.installSpec,
+                  onClick: () => change(`install:${plugin.name}`, { action: 'install', spec: plugin.installSpec }),
+                }, tr('plugins.installHere'))))),
+            value && h('div', { className: 'lwr-plugin-install' },
+              h('input', {
+                className: 'lwr-input',
+                value: spec,
+                spellCheck: false,
+                placeholder: tr('plugins.spec'),
+                'aria-label': tr('plugins.spec'),
+                disabled: busy !== undefined,
+                onChange: (event) => setSpec(event.target.value),
+                onKeyDown: (event) => {
+                  if (event.key === 'Enter' && spec.trim()) change('install', { action: 'install', spec: spec.trim() });
+                },
+              }),
+              h('button', { type: 'button', className: 'lwr-button', disabled: busy !== undefined || !spec.trim(), onClick: () => change('install', { action: 'install', spec: spec.trim() }) }, tr('plugins.install'))),
+            notice?.kind === 'restart' && h('div', { className: 'lwr-info' }, tr('plugins.restartNeeded'),
+              ' ',
+              h('button', { type: 'button', className: 'lwr-button', 'data-primary': '', disabled: busy !== undefined, onClick: restart }, tr('plugins.restart'))),
+            notice?.kind === 'info' && h('div', { className: 'lwr-note' }, notice.text),
+            notice?.kind === 'error' && h('div', { className: 'lwr-alert', role: 'alert' }, notice.text),
+            busy !== undefined && h('div', { className: 'lwr-note', role: 'status' }, '…'),
+            h('div', null, h('button', { type: 'button', className: 'lwr-button', onClick: () => openUrl(host.name, false).catch(() => {}) }, tr('plugins.openUi'))));
+        }
+
         function Host({ host, onResult }) {
           const tr = useT();
           const [busy, setBusy] = React.useState(false);
           const [failure, setFailure] = React.useState(undefined);
+          const [showPlugins, setShowPlugins] = React.useState(false);
           const run = async (action) => {
             setBusy(true);
             setFailure(undefined);
@@ -961,7 +1136,7 @@ window.__ModuleLoader__.load({
           if (host.dsh) details.push(tr('version', { version: host.dsh }));
           if (connected && host.shareLogin !== undefined) details.push(tr(host.shareLogin ? 'shared' : 'separate'));
           if (connected && host.profile) details.push(`profile ${host.profile}`);
-          return h('div', { className: 'lwr-host' },
+          return h('div', { className: 'lwr-host-wrap' }, h('div', { className: 'lwr-host' },
             h('span', { className: 'lwr-dot', 'data-state': host.state, 'aria-hidden': true }),
             h('div', { className: 'lwr-text' },
               h('div', { className: 'lwr-name' }, `WSL: ${host.name}`,
@@ -973,10 +1148,12 @@ window.__ModuleLoader__.load({
               host.launcher && h(Launcher, { launcher: host.launcher }),
               failure && h('div', { className: 'lwr-alert', role: 'alert' }, failure)),
             h('div', { className: 'lwr-actions' },
+              connected && h('button', { type: 'button', className: 'lwr-button', 'aria-expanded': showPlugins, disabled: busy, onClick: () => setShowPlugins((open) => !open) }, tr('plugins.toggle')),
               connected && h('button', { type: 'button', className: 'lwr-button', 'data-primary': '', disabled: busy, onClick: () => run(() => openUrl(host.name, false)) }, tr('open')),
               connected && h('button', { type: 'button', className: 'lwr-button', disabled: busy, onClick: () => run(() => openUrl(host.name, true)) }, tr('openExternal')),
               (connected || connecting) && h('button', { type: 'button', className: 'lwr-button', disabled: busy, onClick: () => post('disconnect') }, tr('disconnect')),
-              !connected && !connecting && h('button', { type: 'button', className: 'lwr-button', 'data-primary': '', disabled: busy, onClick: () => post('connect') }, tr(host.state === 'error' ? 'retry' : 'connect'))));
+              !connected && !connecting && h('button', { type: 'button', className: 'lwr-button', 'data-primary': '', disabled: busy, onClick: () => post('connect') }, tr(host.state === 'error' ? 'retry' : 'connect')))),
+            connected && showPlugins && h(Plugins, { host }));
         }
 
         function ConnectionsRow() {

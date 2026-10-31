@@ -75,6 +75,16 @@ WSL 中只会留下 `~/.dsh-wsl-remote` 和 `~/.local/bin/dsh-harness`，可以�
 
 之前版本添加的 `\\wsl.localhost\…` 工作区会与 WSL 里同一文件夹的工作区合并成一行，并显示为 Linux 路径；之后新建的会话都在 WSL 的 dsh 里运行，以前在 Windows 上运行过的旧会话仍然留在原处。
 
+### 插件：哪边装了什么
+
+WSL 会话的 Agent（工具、技能、MCP 服务、模型提供方）用的是 WSL dsh 里装的插件；这个窗口的界面和它自己的插件管理页始终是 Windows 的。在 设置 → 通用设置 里，已连接发行版旁边的 **WSL 插件** 会列出那个 dsh 的插件，并逐个标注：
+
+- **仅 WSL**：WSL 会话有，Windows 会话没有；
+- **Windows 为 x.y.z**：两边都装了，但版本不同；
+- **Windows 也已安装**：两边都装了，版本相同。
+
+下面的 **仅装在 Windows 的插件** 列出 WSL 会话没有的插件。在这个面板里可以启用、停用、卸载 WSL 的插件，按包名或安装地址安装，也可以把仅 Windows 的插件 **装到 WSL**（从 Windows 文件夹链接安装的插件，会通过 `/mnt/<盘符>/…` 链接到同一份文件）。这些操作都由 WSL dsh 自己的插件管理器执行；需要重启才能生效时，面板会提供"重启 WSL 中的 dsh"。**在 WSL dsh 自己的界面中管理** 会打开它完整的插件页面。
+
 ### 共享登录状态
 
 开启「共享登录状态」（默认开启）后，WSL dsh 内的 agent 会通过 `wsl.exe` 管道，把每一次凭据读写都交给 Windows 的凭据存储处理：API Key、DeepSeek 账号登录和其他插件的凭据记录。WSL 中的每次 `modifyRecord` 都在 Windows 凭据存储的 `modifyRecord` 内部执行，处于它的跨进程写锁之下，所以两边的令牌刷新不会互相覆盖或作废。只有 WSL dsh 签发自己浏览器 Cookie 的密钥（`client-connection/browser-session`）留在 WSL。关闭共享后，WSL dsh 使用自己的 `~/.dsh/.credentials.yaml`。
@@ -156,7 +166,8 @@ Codex 的窗口在每个请求里都带 `hostId`。DeepSeek Harness 的客户端
 - WSL 的 dsh 必须与 Windows 上的 DeepSeek Harness 是同一版本：合并的会话使用 Windows 端的 Remote API。
 - 合并层包装的是 DeepSeek Harness 内部的 Gateway 分发入口（`dispatchRpc`、`openWireStream`）、Connection 的精确路由表、Web 服务器的路由表和模型选择器的会话目录，DSH 升级后可能需要同步更新（`engines.dsh`）。归属是从 ID 推断的（见上文），不像 Codex 那样由窗口通过 `hostId` 声明。
 - 发行版断开时，它的会话仍显示在列表里（最后一次的状态），打开时会自动重连。正在进行的流会中断，DSH 客户端会照常重连。
-- 只合并与会话相关的事件。WSL dsh 的设置、插件管理和账号页面不会出现在 Windows 窗口里，需要时请在 WSL dsh 自己的界面里打开。
+- 只合并与会话相关的事件。WSL dsh 的设置和账号页面不会出现在 Windows 窗口里；它的插件可以在上面的 WSL 插件面板里管理，或者在它自己的界面里管理。
+- 已知问题：从面板安装插件可能卡住。WSL dsh 的插件管理器已经写好依赖（pnpm 日志以 `Done` 结束），但它启动的 pnpm 进程不退出，安装会一直等到插件管理器 10 分钟的空闲超时把它结束并还原配置。同样的 `pnpm add` 在 WSL 终端里运行会立即退出。在解决之前，请在 WSL dsh 自己的界面里安装，或在 WSL 中运行 `dsh plugin --profile web add <安装地址>`；列出、启用、停用和卸载不受影响。
 - 插件的侧边栏要在 WSL 会话里可用，WSL 的 dsh 里也必须装同一个插件，否则它的 WSL 请求会失败。不指向任何会话的插件路由（共享资源、全局设置）始终由 Windows 处理。
 - 「在应用中打开」通过 `\\wsl.localhost`（9P）在 Windows 上打开 WSL 文件。
 - 工作区行没有供插件使用的扩展位，WSL 标记是插入到侧边栏页面中的；DSH 调整侧边栏结构后可能需要更新插件。
@@ -185,8 +196,12 @@ $env:DSH_HOME = $h; $env:DSH_TELEMETRY_DISABLED = '1'; $env:DSH_CLIENT_VERSION =
 & $dsh --expose-internals --import ./test/resolve-boot.mjs test/boot-desktop.mjs "$h\profiles\desktop" (Get-Location).Path Ubuntu-26.04
 # WSL 会话的插件路由、发行版自己的模型目录、断开时的进程组清理
 & $dsh --expose-internals --import ./test/resolve-boot.mjs test/boot-wsl-session.mjs "$h\profiles\desktop" Ubuntu-26.04
+# 列出发行版的插件并与 Windows 对比；通过面板的接口停用再启用一个
+& $dsh --expose-internals --import ./test/resolve-boot.mjs test/boot-wsl-plugins.mjs "$h\profiles\desktop" Ubuntu-26.04 dsh-vscode-mode
 # 保持组合运行并开放网页界面，便于在浏览器里操作真实客户端
 & $dsh --expose-internals --import ./test/resolve-boot.mjs test/serve-desktop.mjs "$h\profiles\desktop" Ubuntu-26.04
+# 再对开启了 --remote-debugging-port=9333 的无头 Chrome 执行操作步骤
+& $dsh test/cdp.mjs 9333 <steps.mjs>
 ```
 
 `server/agent.mjs`、`server/launch.sh`、`server/dsh-harness.sh` 或 `lib/mux.js` 变化时，请递增 `lib/remote.js` 中的 `AGENT_VERSION`。

@@ -28,6 +28,7 @@ import { watchRequests } from './lib/requests.js';
 import { createLinuxDirectory, listLinuxDirectory, parseOsRelease, toUncPath } from './lib/linux-fs.js';
 import { WslBridge, wrapFetchRoutes, wrapGateway } from './lib/bridge/bridge.js';
 import { RouteForwarder } from './lib/bridge/routes.js';
+import { comparePlugins } from './lib/plugins.js';
 
 const packageDir = dirname(fileURLToPath(import.meta.url));
 const ROUTE = '/api/local-wsl-remote';
@@ -257,6 +258,39 @@ export default class WslRemoteService extends Service {
         await this.known(distro);
         return { catalog: await this.bridge.modelCatalog(distro) };
       });
+      // Plugins of a distribution's dsh, beside this Host's: where each one is installed.
+      route('plugins', ['POST'], async (request) => {
+        const { distro } = await body(request);
+        await this.known(distro);
+        return this.pluginsOf(distro);
+      });
+      // Manage a distribution's plugins from this window, through that dsh's own plugin manager.
+      route('plugins/change', ['POST'], async (request) => {
+        const { distro, action, name, spec, enabled } = await body(request);
+        await this.known(distro);
+        const calls = {
+          enable: () => ['pluginManager/setBundleEnabled', { name, enabled: enabled !== false }],
+          remove: () => ['pluginManager/removeBundle', { name }],
+          install: () => ['pluginManager/installBundle', { spec, options: { enabled: true } }],
+        };
+        if (!(action in calls)) throw new Error(`unknown plugin action ${String(action)}`);
+        if (action === 'install' ? typeof spec !== 'string' || !spec.trim() : typeof name !== 'string' || !name) throw new Error('a plugin name or install spec is required');
+        const [endpoint, args] = calls[action]();
+        const client = await this.bridge.client(distro);
+        const result = await client.call(endpoint, { args });
+        if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+        return { result: result.value, ...(await this.pluginsOf(distro)) };
+      });
+      // Restart a distribution's dsh so plugin changes that wait for a restart take effect.
+      route('restart', ['POST'], async (request) => {
+        const { distro } = await body(request);
+        await this.known(distro);
+        const connection = this.connection(distro);
+        await connection.disconnect();
+        await connection.connect().catch(() => {});
+        this.remember(distro, true);
+        return this.status();
+      });
       // Folders `dsh-harness` asked to open. Every window polls; the first to claim one adds it.
       route('open-requests', ['GET'], () => {
         const cutoff = Date.now() - OPEN_REQUEST_TTL_MS;
@@ -300,6 +334,25 @@ export default class WslRemoteService extends Service {
       this.infoCache.set(distro, pending);
     }
     return pending;
+  }
+
+  /**
+   * The plugin bundles of one distribution's dsh, each marked against this
+   * Host's: installed here too (same or another version) or only there.
+   * Built-in bundles that ship with dsh itself (availability `installation`,
+   * not declared by the profile) are left out: both sides have them.
+   */
+  async pluginsOf(distro) {
+    const client = await this.bridge.client(distro);
+    const remote = await client.call('pluginManager/listBundles', { args: {} });
+    if (!remote.ok) throw new Error(`${remote.error.code}: ${remote.error.message}`);
+    let windowsBundles = [];
+    try {
+      // A Promise when reached through the service proxy; the list itself otherwise.
+      const listed = await this.ctx.get('pluginManager')?.listBundles?.();
+      if (Array.isArray(listed)) windowsBundles = listed;
+    } catch {}
+    return { distro, ...comparePlugins(remote.value, windowsBundles) };
   }
 
   /** Run one discovery (single-flight). A failure keeps the previous list and records the reason. */
