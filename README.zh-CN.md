@@ -188,10 +188,8 @@ $env:WSL_DISTRO = 'Ubuntu-26.04'
 启动演练：在临时 DSH 主目录中按桌面版的方式启动真实的组合，连接发行版，经 Windows Gateway 创建 Windows 会话和 WSL 会话、向 WSL 会话发送提示并读取历史、实时输出和事件，不影响正在运行的应用：
 
 ```powershell
-$h = "$env:TEMP\wslr-boot-home"; New-Item -ItemType Directory -Force "$h\profiles\desktop" | Out-Null
-$p = "$env:USERPROFILE\.dsh\profiles\desktop"
-Copy-Item "$p\package.json","$p\cordis.yml","$p\cordis.patch.yml","$p\pnpm-workspace.yaml" "$h\profiles\desktop"
-New-Item -ItemType Junction -Path "$h\profiles\desktop\node_modules" -Target "$p\node_modules" | Out-Null
+# 在 .scratch/boot-home 建临时 DSH 主目录：复制桌面版 profile 的清单，node_modules 用目录链接指向原处
+$h = & $dsh test/boot-home.mjs
 $env:DSH_HOME = $h; $env:DSH_TELEMETRY_DISABLED = '1'; $env:DSH_CLIENT_VERSION = '0.2.1-rc.5'
 & $dsh --expose-internals --import ./test/resolve-boot.mjs test/boot-desktop.mjs "$h\profiles\desktop" (Get-Location).Path Ubuntu-26.04
 # WSL 会话的插件路由、发行版自己的模型目录、断开时的进程组清理

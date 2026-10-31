@@ -188,10 +188,8 @@ $env:WSL_DISTRO = 'Ubuntu-26.04'
 Boot rehearsal: boot the real composition the way the Desktop does, in a throwaway DSH home, connect a distribution, and through the Windows Gateway create a Windows and a WSL session, prompt the WSL one and read its history, live output and events, without touching the running app:
 
 ```powershell
-$h = "$env:TEMP\wslr-boot-home"; New-Item -ItemType Directory -Force "$h\profiles\desktop" | Out-Null
-$p = "$env:USERPROFILE\.dsh\profiles\desktop"
-Copy-Item "$p\package.json","$p\cordis.yml","$p\cordis.patch.yml","$p\pnpm-workspace.yaml" "$h\profiles\desktop"
-New-Item -ItemType Junction -Path "$h\profiles\desktop\node_modules" -Target "$p\node_modules" | Out-Null
+# a throwaway DSH home in .scratch/boot-home: the Desktop profile's manifests, its node_modules by junction
+$h = & $dsh test/boot-home.mjs
 $env:DSH_HOME = $h; $env:DSH_TELEMETRY_DISABLED = '1'; $env:DSH_CLIENT_VERSION = '0.2.1-rc.5'
 & $dsh --expose-internals --import ./test/resolve-boot.mjs test/boot-desktop.mjs "$h\profiles\desktop" (Get-Location).Path Ubuntu-26.04
 # a WSL session's plugin routes, its distribution's model catalog, process-group cleanup on disconnect
