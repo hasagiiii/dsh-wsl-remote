@@ -1,7 +1,8 @@
 # dsh-wsl-remote — notes for agents
 
-Machine-wide rules are in `~/.dsh/AGENTS.md` (loaded automatically). This file
-adds what is specific to this repository.
+Machine-wide rules come from the `dsh-agent-guardrails` plugin (prompt section,
+command gate, `~/.dsh/guardrails/lessons.json`). This file adds what is
+specific to this repository.
 
 ## Layout
 
