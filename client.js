@@ -207,16 +207,21 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     // Workspaces: "Add workspace" offers Local and WSL; WSL opens a Linux
     // folder dialog; WSL workspaces get a "WSL · <OS>" badge in the sidebar.
-    // A WSL workspace is an ordinary DSH workspace whose path is the
-    // \\wsl.localhost\<distro>\… UNC of the Linux folder (DSH has no host
-    // field on workspaces); the distribution is read back from that path.
+    // A WSL workspace is a workspace of the dsh inside that distribution and
+    // keeps its Linux path; the Host's merge says which distribution owns it.
+    // The picker hands `\\wsl.localhost\<distro>\<path>` to workspace/create
+    // only to name the distribution; the workspace is stored with the Linux path.
     // ---------------------------------------------------------------------
     const UNC = /^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)(\\.*)?$/i;
-    const uncInfo = (path) => {
-      const match = UNC.exec(String(path ?? ''));
+    const toUnc = (distro, linux) => `\\\\wsl.localhost\\${distro}${linux === '/' ? '\\' : linux.replace(/\//g, '\\')}`;
+    const isLinuxPath = (path) => typeof path === 'string' && path.startsWith('/') && !path.startsWith('//');
+    /** Which distribution owns a WSL workspace: from the Host's merge, or a legacy `\\wsl.localhost` path. */
+    const wslInfo = (item, hosts) => {
+      const distro = hosts[item?.workspaceId];
+      if (distro !== undefined) return { distro, linux: item.path };
+      const match = UNC.exec(String(item?.path ?? ''));
       return match ? { distro: match[1], linux: (match[2] ?? '\\').replace(/\\/g, '/') || '/' } : undefined;
     };
-    const toUnc = (distro, linux) => `\\\\wsl.localhost\\${distro}${linux === '/' ? '\\' : linux.replace(/\//g, '\\')}`;
     const osLabelOf = (os) => (os ? [os.name, os.version].filter(Boolean).join(' ') || os.pretty || '' : '');
 
     const workspaceCss = `
@@ -294,13 +299,13 @@ window.__ModuleLoader__.load({
 
       /** Distribution facts (name, OS, state, home) shared by the badge, the chooser and the picker. */
       const distros = (() => {
-        let state = { distros: [], loaded: false };
+        let state = { distros: [], workspaces: {}, loaded: false };
         const listeners = new Set();
         let inflight;
         let timer;
         const refresh = () => (inflight ??= call('api/local-wsl-remote/distros')
           .then((value) => {
-            state = { distros: value.distros ?? [], loaded: true };
+            state = { distros: value.distros ?? [], workspaces: value.workspaces ?? {}, loaded: true };
             for (const listener of listeners) listener();
           })
           .catch(() => {})
@@ -324,6 +329,153 @@ window.__ModuleLoader__.load({
         };
       })();
       const useDistros = () => React.useSyncExternalStore(distros.subscribe, distros.getSnapshot, distros.getSnapshot);
+
+      /**
+       * The distribution a session belongs to, from what this window already
+       * knows: its workspace (the Host's merge reports which distribution owns
+       * each WSL workspace), else a Linux working directory with exactly one
+       * connected distribution. Windows sessions have drive or UNC paths.
+       */
+      const hostOfSession = (sessionId) => {
+        const state = distros.getSnapshot();
+        const items = ctx.get('workspaces')?.list?.getSnapshot?.().items ?? [];
+        const workspace = items.find((item) => item.sessionIds.includes(sessionId));
+        if (workspace !== undefined && state.workspaces[workspace.workspaceId] !== undefined) return state.workspaces[workspace.workspaceId];
+        const cwd = ctx.get('sessions')?.list?.getSnapshot?.().byId?.[sessionId]?.cwd ?? workspace?.path;
+        if (!isLinuxPath(cwd)) return undefined;
+        const connected = state.distros.filter((entry) => entry.state === 'connected').map((entry) => entry.name);
+        return connected.length === 1 ? connected[0] : undefined;
+      };
+      /** Whether a session runs in WSL: its workspace belongs to a distribution, or its directory is a Linux path. */
+      const isWslSession = (sessionId) => {
+        if (hostOfSession(sessionId) !== undefined) return true;
+        const items = ctx.get('workspaces')?.list?.getSnapshot?.().items ?? [];
+        const workspace = items.find((item) => item.sessionIds.includes(sessionId));
+        const cwd = ctx.get('sessions')?.list?.getSnapshot?.().byId?.[sessionId]?.cwd ?? workspace?.path;
+        return isLinuxPath(cwd);
+      };
+
+      // ---- Model picker: a WSL session offers its own dsh's models. ----
+      // The shipped picker loads one catalog per window (`session/modelCatalog`
+      // names no session), which is the Windows one. For a WSL session the
+      // per-session directory is built on that distribution's catalog instead,
+      // so it lists, defaults to and validates against what the WSL dsh routes.
+      const wslCatalogs = new Map();
+      /**
+       * A catalog in the shape the shipped picker reads (store, load,
+       * reasoningFor), loaded from one distribution. `resolve` names the
+       * distribution at load time: a session may be known to be WSL (Linux
+       * path) before this window knows which distribution owns it.
+       */
+      const makeCatalog = (resolve, base) => {
+        const listeners = new Set();
+        let state = { value: null, status: 'idle', error: null };
+        let inflight;
+        let loadedAt = 0;
+        const reasoning = new Map();
+        const set = (next) => {
+          state = next;
+          for (const listener of [...listeners]) listener();
+        };
+        const catalog = {
+          store: {
+            getSnapshot: () => state,
+            subscribe: (listener) => {
+              listeners.add(listener);
+              return () => listeners.delete(listener);
+            },
+          },
+          reasoningFor: (selection) => reasoning.get(JSON.stringify([selection.provider, selection.model])) ?? base.reasoningFor?.(selection),
+          load() {
+            if (state.status === 'ready' && state.value !== null && Date.now() - loadedAt < 30000) return Promise.resolve(state.value);
+            inflight ??= (async () => {
+              if (state.value === null) set({ ...state, status: 'loading', error: null });
+              try {
+                const distro = await resolve();
+                if (distro === undefined) throw new Error('this WSL session’s distribution is not known yet');
+                const { catalog: value } = await call('api/local-wsl-remote/model-catalog', { method: 'POST', body: JSON.stringify({ distro }) });
+                for (const group of value.groups ?? []) for (const model of group.models ?? []) reasoning.set(JSON.stringify([group.id, model.id]), model.reasoning);
+                loadedAt = Date.now();
+                set({ value, status: 'ready', error: null });
+                return value;
+              } catch (error) {
+                set({ ...state, status: 'error', error: error instanceof Error ? error.message : String(error) });
+                throw error;
+              } finally {
+                inflight = undefined;
+              }
+            })();
+            return inflight;
+          },
+          refresh() {
+            loadedAt = 0;
+            catalog.load().catch(() => {});
+          },
+        };
+        return catalog;
+      };
+      const catalogOf = (sessionId, base) => {
+        const known = hostOfSession(sessionId);
+        if (known !== undefined) {
+          let catalog = wslCatalogs.get(known);
+          if (catalog === undefined) {
+            catalog = makeCatalog(async () => known, base);
+            wslCatalogs.set(known, catalog);
+          }
+          return catalog;
+        }
+        // Not known yet: settle the distribution list once, then ask again.
+        const catalog = makeCatalog(async () => {
+          await distros.refresh();
+          return hostOfSession(sessionId);
+        }, base);
+        wslCatalogs.set(`session:${sessionId}`, catalog);
+        return catalog;
+      };
+      ctx.effect(() => {
+        let restore;
+        let timer;
+        const install = () => {
+          const proxy = ctx.get('modelDirectories');
+          if (proxy === undefined) return false;
+          const service = Reflect.get(proxy, Symbol.for('cordis.original')) ?? proxy;
+          if (typeof service.directoryFor !== 'function' || service.catalog === undefined) return false;
+          const original = service.directoryFor;
+          const own = Object.prototype.hasOwnProperty.call(service, 'directoryFor');
+          service.directoryFor = function directoryFor(sessionId) {
+            if (!isWslSession(sessionId)) return original.call(service, sessionId);
+            // The shipped resolver builds a new directory on `service.catalog`; give it the distribution's for that one call.
+            const shared = service.catalog;
+            const catalog = catalogOf(sessionId, shared);
+            service.catalog = catalog;
+            try {
+              return original.call(service, sessionId);
+            } finally {
+              service.catalog = shared;
+              catalog.load().catch(() => {});
+            }
+          };
+          restore = () => {
+            if (own) service.directoryFor = original;
+            else delete service.directoryFor;
+          };
+          return true;
+        };
+        const attempt = () => {
+          if (!install()) timer = setTimeout(attempt, 1000);
+        };
+        attempt();
+        // A WSL dsh's models change with its own settings or a reconnect: reload on focus.
+        const onFocus = () => {
+          for (const catalog of wslCatalogs.values()) catalog.refresh();
+        };
+        window.addEventListener('focus', onFocus);
+        return () => {
+          clearTimeout(timer);
+          window.removeEventListener('focus', onFocus);
+          restore?.();
+        };
+      }, 'wsl-remote: per-host model catalogs');
 
       // ---- Add workspace: Local / WSL chooser, then the matching picker. ----
 
@@ -502,7 +654,7 @@ window.__ModuleLoader__.load({
             h('label', { className: 'lwr-check' },
               h('input', { type: 'checkbox', checked: showHidden, onChange: (event) => setShowHidden(event.target.checked) }),
               tr('picker.showHidden'))),
-          listing && h('div', { className: 'lwr-target' }, tr('picker.target', { path: '' }), h('code', null, listing.unc))));
+          listing && h('div', { className: 'lwr-target' }, tr('picker.target', { path: '' }), h('code', null, `${distro}:${listing.path}`))));
       }
 
       /**
@@ -566,6 +718,7 @@ window.__ModuleLoader__.load({
         let workspaceItems = [];
         let distroState = distros.getSnapshot();
         let frame = 0;
+        let lastAsk = 0;
         const schedule = () => {
           if (frame) return;
           frame = requestAnimationFrame(() => {
@@ -597,9 +750,14 @@ window.__ModuleLoader__.load({
         const paint = () => {
           attach();
           const byId = new Map(workspaceItems.map((item) => [item.workspaceId, item]));
+          // A WSL workspace the Host has not reported yet (just added): ask again.
+          if (workspaceItems.some((item) => isLinuxPath(item.path) && distroState.workspaces[item.workspaceId] === undefined) && Date.now() - lastAsk > 2000) {
+            lastAsk = Date.now();
+            distros.refresh();
+          }
           for (const row of document.querySelectorAll('[data-row-key^="workspace:"]')) {
             const id = row.getAttribute('data-row-key').slice('workspace:'.length);
-            const info = uncInfo(byId.get(id)?.path);
+            const info = wslInfo(byId.get(id), distroState.workspaces);
             const holder = row.querySelector('[class$="_projectText"]');
             if (holder === null) continue;
             let tag = holder.querySelector(':scope > .lwr-wsl-tag');

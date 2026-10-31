@@ -50,7 +50,7 @@ try {
   const home = wsl.connections.get(distro).facts.home;
   const created = await rpc('workspace/create', { request: { path: `\\\\wsl.localhost\\${distro}${home.replace(/\//g, '\\')}` } });
   assert.ok(created.ok, JSON.stringify(created.error));
-  assert.match(created.value.workspace.path, /^\\\\wsl\.localhost\\/);
+  assert.equal(created.value.workspace.path, home, 'a WSL workspace keeps its Linux path');
   const follow = await stream('workspace/follow', {}, stop.signal);
   const baseline = (await follow[Symbol.asyncIterator]().next()).value;
   assert.equal(baseline.type, 'baseline');
@@ -63,12 +63,27 @@ try {
   const wslSession = await rpc('session/create', { request: { workspaceId: wslWorkspace.workspaceId } });
   assert.ok(wslSession.ok, JSON.stringify(wslSession.error));
   const sessionId = wslSession.value.sessionId;
+  step('the merged follow stream lists the new WSL session in its workspace');
+  const followIterator = follow[Symbol.asyncIterator]();
+  const listed = await Promise.race([
+    (async () => {
+      while (true) {
+        const { value, done } = await followIterator.next();
+        if (done) return 'ended';
+        console.log('   follow frame:', value.type, JSON.stringify(value.value?.items?.map((item) => [item.workspaceId, item.path, item.sessionIds.length]) ?? value));
+        const item = value.value?.items?.find((entry) => entry.workspaceId === wslWorkspace.workspaceId);
+        if (item?.sessionIds.includes(sessionId)) return 'listed';
+      }
+    })(),
+    new Promise((resolve) => setTimeout(() => resolve('timeout'), 10000)),
+  ]);
+  assert.equal(listed, 'listed', 'the WSL workspace row gains the created session');
   assert.equal(ctx.get('sessions').get(sessionId), undefined, 'the WSL session does not live in the Windows Host');
   assert.notEqual(ctx.get('sessions').get(winSession.value.sessionId), undefined, 'the Windows session does');
 
   const list = await rpc('session/list', { _request: {} });
   const rows = new Map(list.value.items.map((item) => [item.sessionId, item]));
-  assert.match(rows.get(sessionId)?.cwd ?? '', /^\\\\wsl\.localhost\\/);
+  assert.match(rows.get(sessionId)?.cwd ?? '', /^\//);
   assert.ok(rows.has(winSession.value.sessionId));
 
   step('history, live assistant frames and forwarded events of the WSL session');
@@ -81,8 +96,9 @@ try {
   const reply = (async () => {
     let text = '';
     for await (const frame of history) {
-      if (frame.type === 'snapshot') assert.match(frame.header.cwd, /^\\\\wsl\.localhost\\/);
+      if (frame.type === 'snapshot') assert.match(frame.header.cwd, /^\//);
       if (frame.type !== 'event') continue;
+      if (frame.event.type === 'turn/end' && frame.event.data?.reason?.kind === 'error') throw new Error(`the WSL turn failed: ${frame.event.data.reason.error?.message}`);
       if (frame.event.type === 'assistant/message') text += frame.event.data.message.content.filter((part) => part.type === 'text').map((part) => part.text).join('');
       if (frame.event.type === 'turn/end') return text;
     }

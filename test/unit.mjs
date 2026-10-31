@@ -18,7 +18,7 @@ import { Mux } from '../lib/mux.js';
 import { decode, parseDistros } from '../lib/wsl.js';
 import { dshRequirement, requirementMessage } from '../lib/requirements.js';
 import { parseRequest } from '../lib/requests.js';
-import { applyWorkspaceFrame, emptyWorkspaceState, insertBefore, mergeModelCatalogs, mergeWorkspaces, sessionHints, splitBytes, toHostArgs, wslSummary, baselineFrames } from '../lib/bridge/merge.js';
+import { applyWorkspaceFrame, distroOfPath, emptyWorkspaceState, insertBefore, mergeWorkspaces, requestSessionHints, sessionHints, splitBytes, toHostArgs, wslSummary, baselineFrames } from '../lib/bridge/merge.js';
 import { fromUncPath, toUncPath } from '../lib/linux-fs.js';
 
 let failures = 0;
@@ -176,7 +176,8 @@ await test('merge: Windows and WSL workspaces in one list', () => {
     order: ['l2'],
   });
   assert.deepEqual(order, ['l2', 'w1', 'w2']);
-  assert.deepEqual(baseline.items.map((item) => item.path), ['\\\\wsl.localhost\\Ubuntu\\srv\\x', 'C:\\work', '\\\\wsl.localhost\\Ubuntu\\home\\me\\repo']);
+  // WSL workspaces keep their Linux paths; a legacy \\wsl.localhost row shows the WSL one's.
+  assert.deepEqual(baseline.items.map((item) => item.path), ['/srv/x', 'C:\\work', '/home/me/repo']);
   // The legacy Windows row and the WSL row of the same folder are one row, under the Windows id.
   const merged = baseline.items[2];
   assert.equal(merged.workspaceId, 'w2');
@@ -191,8 +192,8 @@ await test('merge: Windows and WSL workspaces in one list', () => {
   assert.deepEqual(insertBefore(['a', 'b', 'c'], 'a'), ['b', 'c', 'a']);
 });
 
-await test('merge: WSL values shown in the Windows spelling, sent back as Linux', () => {
-  assert.deepEqual(wslSummary('Ubuntu', { sessionId: 's', cwd: '/home/me' }), { sessionId: 's', cwd: '\\\\wsl.localhost\\Ubuntu\\home\\me' });
+await test('merge: WSL values keep Linux paths; picker UNC input is sent as Linux', () => {
+  assert.deepEqual(wslSummary('Ubuntu', { sessionId: 's', cwd: '/home/me' }), { sessionId: 's', cwd: '/home/me' });
   assert.deepEqual(wslSummary('Ubuntu', { sessionId: 's' }), { sessionId: 's' });
   const ids = { w2: 'l1' };
   assert.deepEqual(toHostArgs('session/create', { request: { workspaceId: 'w2' } }, (id) => ids[id]), { request: { workspaceId: 'l1' } });
@@ -200,14 +201,63 @@ await test('merge: WSL values shown in the Windows spelling, sent back as Linux'
   assert.deepEqual(toHostArgs('session/prompt', { request: { sessionId: 's' } }, () => undefined), { request: { sessionId: 's' } });
 });
 
-await test('merge: model catalogs and control baselines', () => {
-  const windows = { default: { provider: 'p1', model: 'm1' }, routableProviders: ['p1'], groups: [{ id: 'p1', name: 'P1', models: [{ id: 'm1', name: 'M1' }] }], failures: [] };
-  const wsl = { default: { provider: 'p2', model: 'm2' }, routableProviders: ['p2', 'p1'], groups: [{ id: 'p2', name: 'P2', models: [{ id: 'm2', name: 'M2' }] }, { id: 'p1', name: 'P1', models: [{ id: 'm1', name: 'M1' }, { id: 'm3', name: 'M3' }] }], failures: [] };
-  const merged = mergeModelCatalogs(windows, [{ distro: 'Ubuntu', catalog: wsl }]);
-  assert.deepEqual(merged.default, windows.default);
-  assert.deepEqual(merged.routableProviders, ['p1', 'p2']);
-  assert.deepEqual(merged.groups.map((group) => `${group.id}:${group.models.map((model) => model.id).join('+')}`), ['p1:m1+m3', 'p2:m2']);
+await test('merge: which distribution a Linux path belongs to', () => {
+  const roots = [{ distro: 'Ubuntu', path: '/home/me' }, { distro: 'Debian', path: '/home/me/deb' }, { distro: 'Arch', path: '/srv' }];
+  assert.equal(distroOfPath('/home/me/repo/a.txt', roots), 'Ubuntu');
+  assert.equal(distroOfPath('/home/me/deb/x', roots), 'Debian', 'the deepest workspace wins');
+  assert.equal(distroOfPath('/home/me', roots), 'Ubuntu');
+  assert.equal(distroOfPath('/home/meow', roots), undefined, 'a sibling prefix is not inside');
+  assert.equal(distroOfPath('/tmp/x', roots, ['Ubuntu']), 'Ubuntu', 'outside every workspace: the only connected distribution');
+  assert.equal(distroOfPath('/tmp/x', roots, ['Ubuntu', 'Arch']), undefined);
+  assert.equal(distroOfPath('C:\\work', roots, ['Ubuntu']), undefined);
+});
+
+await test('merge: control baselines', () => {
   assert.deepEqual(baselineFrames({ projections: { s: { asOfSeq: 7, values: { title: 't' } } } }), [{ type: 'projection', sessionId: 's', key: 'title', value: 't', seq: 7 }]);
+});
+
+await test('routes: which WSL session a plugin request names', () => {
+  const id = 'session-9a0d2c7e-1b2f-4c3d-8e9f-0a1b2c3d4e5f';
+  assert.deepEqual(requestSessionHints(new URL(`http://x/sidebar/file?sessionId=${id}&path=a`)), [id]);
+  assert.deepEqual(requestSessionHints(new URL(`http://x/sidebar/html/${encodeURIComponent(id)}/index.html`)), [id], 'a session-id path segment');
+  assert.deepEqual(requestSessionHints(new URL('http://x/sidebar/api/fs.tree'), { sessionId: id, cwd: '/home/me' }), [id], 'a JSON body field');
+  assert.deepEqual(requestSessionHints(new URL('http://x/sidebar/api/teams.taskCreate'), { rootSessionId: id }), [id]);
+  assert.deepEqual(requestSessionHints(new URL('http://x/sidebar/api/x'), { request: { sessionId: id } }), [id]);
+  assert.deepEqual(requestSessionHints(new URL('http://x/sidebar/bundle/client-editor.js')), [], 'shared assets name no session');
+});
+
+await test('bridge: a WSL workspace just added is routable before its follow stream echoes it', async () => {
+  const { WslBridge } = await import('../lib/bridge/bridge.js');
+  const calls = [];
+  const fake = {
+    call: async (endpoint, { args }) => {
+      calls.push([endpoint, args]);
+      if (endpoint === 'workspace/create') return { ok: true, value: { workspace: { workspaceId: 'l9', path: args.request.path, title: 'x', sessionIds: [], createdAt: '1', updatedAt: '1' } } };
+      if (endpoint === 'session/create') return { ok: true, value: { sessionId: 'ws-new' } };
+      return { ok: false, error: { code: 'x', message: 'x', details: {} } };
+    },
+  };
+  const bridge = new WslBridge({
+    logger: { info() {}, warn() {} },
+    hosts: { distros: () => ['Ubuntu'], connected: () => true, url: () => 'u', ensure: async () => {}, subscribe: () => () => {}, loadOrder: () => [], saveOrder() {} },
+    windows: { knows: async () => false, workspaces: () => ({ items: [], archivedSessionIds: [], pinnedSessionIds: [] }) },
+  });
+  bridge.client = async () => fake; // no follow stream at all: only unary results inform the merge
+  let windowsCalls = 0;
+  const windows = async () => {
+    windowsCalls++;
+    return { ok: false, error: { code: 'workspace/not-found', message: 'not a Windows workspace', details: {} } };
+  };
+  const added = await bridge.dispatchRpc('workspace/create', { args: { request: { path: '\\\\wsl.localhost\\Ubuntu\\home\\me\\x' } } }, undefined, undefined, windows);
+  assert.ok(added.ok);
+  assert.equal(added.value.workspace.path, '/home/me/x', 'shown with its Linux path');
+  assert.deepEqual(calls[0], ['workspace/create', { request: { path: '/home/me/x' } }]);
+  const created = await bridge.dispatchRpc('session/create', { args: { request: { workspaceId: added.value.workspace.workspaceId } } }, undefined, undefined, windows);
+  assert.ok(created.ok, JSON.stringify(created));
+  assert.equal(windowsCalls, 0, 'never sent to Windows');
+  assert.deepEqual(calls[1], ['session/create', { request: { workspaceId: 'l9' } }]);
+  assert.deepEqual(bridge.merged().baseline.items[0].sessionIds, ['ws-new'], 'the new session is listed in its workspace at once');
+  assert.deepEqual(bridge.workspaceHosts(), { l9: 'Ubuntu' });
 });
 
 await test('settings: invalid fields are dropped', () => {

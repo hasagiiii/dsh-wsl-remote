@@ -71,9 +71,9 @@ WSL 中只会留下 `~/.dsh-wsl-remote` 和 `~/.local/bin/dsh-harness`，可以�
 - **本地**：打开 Windows 的文件夹对话框，与原来一样。
 - **WSL**：选择发行版后打开一个基于 Linux 的文件夹选择器，从 Linux 主目录开始，可以输入路径（支持 `~`）、返回上一级、点面包屑跳转、显示隐藏文件夹、新建文件夹。
 
-选好的文件夹会注册为 **WSL 里那个 dsh 的工作区**（它出现在 WSL dsh 自己的界面里，也出现在 Windows 窗口里）。在 Windows 窗口中，它的路径显示为 `\\wsl.localhost\<发行版>\<Linux 路径>`，名字右侧有 **WSL · <系统版本>** 标记（例如 `WSL · Ubuntu 26.04`），圆点颜色表示连接状态。WSL dsh 里原有的工作区和会话也会一并显示。
+选好的文件夹会注册为 **WSL 里那个 dsh 的工作区**（它出现在 WSL dsh 自己的界面里，也出现在 Windows 窗口里）。它在任何地方（包括 Windows 窗口）都保持 Linux 路径（例如 `/home/me/repo`），名字右侧有 **WSL · <系统版本>** 标记（例如 `WSL · Ubuntu 26.04`），圆点颜色表示连接状态。WSL dsh 里原有的工作区和会话也会一并显示。
 
-之前版本添加的 `\\wsl.localhost\…` 工作区会与 WSL 里同一文件夹的工作区合并成一行；之后新建的会话都在 WSL 的 dsh 里运行，以前在 Windows 上运行过的旧会话仍然留在原处。
+之前版本添加的 `\\wsl.localhost\…` 工作区会与 WSL 里同一文件夹的工作区合并成一行，并显示为 Linux 路径；之后新建的会话都在 WSL 的 dsh 里运行，以前在 Windows 上运行过的旧会话仍然留在原处。
 
 ### 共享登录状态
 
@@ -109,34 +109,56 @@ Windows DeepSeek Harness Host
   │   └─ WSL 会话、WSL 工作区 → DeepSeek Harness 官方客户端包
   │        （dsh-client-connection、dsh-api-gateway/client、dsh-typert-registry）
   │          └─ Windows 本机回环中继 ⇄ wsl.exe 标准输入输出 ⇄ WSL 里你的 dsh
-  └─ 会话列表、搜索、模型目录、工作区、会话控制流、事件流：多台主机合并
+  └─ 会话列表、搜索、工作区、会话控制流、事件流：多台主机合并
+  Web 服务器 ── WSL 会话的插件路由（如 /sidebar/*）→ WSL dsh 里的同一个插件
 ```
 
-- **调用路由**：每次 Remote 调用都带着它的会话、Agent 或工作区标识。合并层记下每个会话属于哪台主机（来自各主机的会话列表、工作区和事件），把调用原样交给那台主机；未知的标识依次问 Windows 和已连接的发行版。`session/create` 和 `workspace/create` 按工作区或路径（`\\wsl.localhost\<发行版>\…`）决定主机。
-- **路径**：WSL 返回的 Linux 路径（会话目录、工作区路径、历史快照头）在 Windows 窗口里显示为 `\\wsl.localhost\<发行版>\…`，发回 WSL 前再转回 Linux 路径。
+### 调用属于哪台主机
+
+Codex 的窗口在每个请求里都带 `hostId`。DeepSeek Harness 的客户端没有这个字段：它只连一个 Host，用 ID 指代会话、Agent 和工作区。所以合并层按下面的顺序，从这些 ID 推断每个调用的归属：
+
+1. **调用指明了工作区**（`session/create`，以及带 `workspaceId`、不带 `sessionId` 的其他 `workspace/*` 调用，如重命名、删除）。合并层用各主机的 `workspace/follow` 流拼出一张工作区表，每一行都记着来自哪台主机（`owners`：合并后的 ID → `{ 主机, 该主机上的 ID }`）。调用发给那台主机，ID 换成它自己的。
+2. **调用要新建工作区**（`workspace/create`）。WSL 文件夹选择器传来的 `\\wsl.localhost\<发行版>\<路径>` 只当作地址：从中读出发行版，再用 Linux 路径在那个发行版的 dsh 里创建。其他路径都是 Windows 文件夹。
+3. **调用指明了会话、Agent 或子会话**。从调用参数里读取 ID：`agentId`、`workspaceFileScopeId`、`sessionId`、`parentSessionId`、`childSessionId`、`rootSessionId`，`request` 里的同名字段，以及 `request.address`。第一个能查到归属的 ID 决定主机。归属来自：
+   - 各主机的会话列表（`session/list` 会合并所有主机的列表，每一行都记下来源）；
+   - 各主机工作区行里的 `sessionIds`；
+   - 各发行版的 `session/control` 投影和 `$events` 事件（`api-session/added`、状态、活动）；
+   - `session/create` 和 `session/fork` 的返回结果，在返回的当下就记下。
+4. **ID 还不认识**（在别处新建、尚未出现在列表里的会话）：先问 Windows（它的活动会话，再查它保存的会话记录），再依次用 `session/projections` 问每个已连接的发行版。第一个认识这个 ID 的主机就是归属，结果会记下来。
+5. **调用不指向任何主机**（`session/list`、`session/search`、窗口的模型目录、设置、插件管理、账号）：发给 Windows；其中的集合类调用会再与各发行版的结果合并。
+
+插件的 HTTP 路由和 WebSocket 用同样的规则，从请求里找 ID：`?sessionId=` 等查询参数、本身就是会话 ID 的路径段（`/sidebar/html/<会话 ID>/…`），或 JSON 请求体里的 ID 字段。单独的 Linux 路径（Markdown 文件链接、`/api/file?path=`）交给包含它的 WSL 工作区所在的发行版（取最深的那个），否则交给唯一已连接的发行版。
+
+结果都会缓存，每个 ID 只解析一次。发行版返回的工作区和会话会立即记入合并层，不等它的 follow 流再推一遍：窗口添加 WSL 工作区后会紧接着在里面新建会话。
+
+- **调用路由**：见上一节。调用原样交给它的主机，只替换合并后的工作区 ID 和选择器传来的 `\\wsl.localhost` 地址。
+- **路径**：WSL 的工作区、会话目录和历史快照头在 Windows 窗口里保持 Linux 路径；属于哪个发行版由工作区或会话决定，不靠路径判断。只有「在应用中打开」会把 Linux 路径转成 `\\wsl.localhost\<发行版>\…`，因为那是由 Windows 打开文件。
 - **合并的流**：`workspace/follow` 每次变化都下发完整的合并状态（`replace` 帧）；`session/control` 在开场基线里带上各发行版的投影，之后转发各主机的增量；`$events` 转发 WSL 会话的事件（会话状态、活动、提问、授权确认等），并把 Windows 窗口对提问和确认的回答送回对应的 WSL dsh。
-- **精确路由**：会话日志导出、原始文件上传、`/api/file`、变更对比等按 `sessionId` 或路径转发。
+- **文件、终端、git**：DSH 自带的文件预览（`workspaceFiles/*`）、终端（`terminal/*`）、后台任务、目标和文件上传都带着会话 ID，所以和 Codex 的 `fs/*`、`command/exec` 一样在 WSL 里执行。插件路由也是如此：两边都装了的插件（例如 dsh-better-sidebar 的文件树、编辑器、git 视图和终端，路径为 `/sidebar/*`），WSL 会话的请求由 WSL 里的同一个插件处理。精确路由（会话日志导出、原始上传、`/api/file`、变更对比）按 `sessionId` 或路径转发。
+- **模型**：窗口的模型目录是 Windows 的。WSL 会话的模型选择器使用该发行版自己的模型目录，所以只列出、默认选中并校验 WSL dsh 能路由的模型；Windows 会话只列出 Windows 的模型。
+- **退出清理**：WSL 里的 dsh 以独立进程组组长的身份启动，并上报 PID 和启动时间。连接结束时整组一起结束（先 TERM 再 KILL），之前先核对启动时间，绝不会误杀复用了该 PID 的进程，所以工具、MCP 服务和终端不会残留。
 - **认证**：使用 WSL dsh 文档化的 API 接入方式：`GET /connect?token=<启动令牌>&interactions=answer` 换取签名的 API Cookie，之后 HTTP 和 mux WebSocket 都带这个 Cookie。WSL 一侧不打开任何非回环端口。
 
 ### 源码
 
 - `index.js`：Host 插件，负责发现、连接、设置路由、文件夹选择器，以及安装合并层。
-- `lib/bridge/bridge.js`：合并层，包括路由、合并流和对 Gateway / Fetch 路由的包装。
-- `lib/bridge/merge.js`：纯函数部分，包括会话标识提取、工作区合并、路径转换和模型目录合并。
+- `lib/bridge/bridge.js`：合并层，包括归属判断、路由、合并流和对 Gateway / Fetch 路由的包装。
+- `lib/bridge/routes.js`：WSL 会话的插件 HTTP 路由和 WebSocket，交给 WSL dsh 处理。
+- `lib/bridge/merge.js`：纯函数部分，包括从调用和请求中提取 ID、工作区合并、判断 Linux 路径属于哪个发行版。
 - `lib/bridge/host-client.js`：用 DeepSeek Harness 官方客户端包组装的 WSL dsh 客户端。
 - `lib/remote.js`：一个远程连接，负责部署、版本检查、启动、本机回环中继、应答凭据请求，以及带退避的自动重连。
 - `server/launch.sh`、`server/agent.mjs`：通过登录 Shell 启动 `dsh`；agent 是通过 `dsh --patch` 加载的 Cordis 插件，只在被 Windows Host 启动时运行。
 - `server/dsh-harness.sh`、`lib/requests.js`：`dsh-harness` 命令。
-- `lib/linux-fs.js`：WSL 文件夹选择器，以及 Linux 路径与 `\\wsl.localhost` 路径的转换。
+- `lib/linux-fs.js`：WSL 文件夹选择器，以及从 `\\wsl.localhost` 路径中读出发行版和 Linux 路径。
 
 ## 限制
 
 - WSL 的 dsh 必须与 Windows 上的 DeepSeek Harness 是同一版本：合并的会话使用 Windows 端的 Remote API。
-- 合并层包装的是 DeepSeek Harness 内部的 Gateway 分发入口（`dispatchRpc`、`openWireStream`）和 Connection 的精确路由表，DSH 升级后可能需要同步更新（`engines.dsh`）。
+- 合并层包装的是 DeepSeek Harness 内部的 Gateway 分发入口（`dispatchRpc`、`openWireStream`）、Connection 的精确路由表、Web 服务器的路由表和模型选择器的会话目录，DSH 升级后可能需要同步更新（`engines.dsh`）。归属是从 ID 推断的（见上文），不像 Codex 那样由窗口通过 `hostId` 声明。
 - 发行版断开时，它的会话仍显示在列表里（最后一次的状态），打开时会自动重连。正在进行的流会中断，DSH 客户端会照常重连。
 - 只合并与会话相关的事件。WSL dsh 的设置、插件管理和账号页面不会出现在 Windows 窗口里，需要时请在 WSL dsh 自己的界面里打开。
-- 模型目录合并了两边的提供方，默认模型仍是 Windows 的。WSL 会话使用 WSL dsh 能路由的模型，在会话里切到只有 Windows 才有的模型会被 WSL 拒绝。
-- Windows 侧的「在应用中打开」、右侧边栏文件视图等直接访问 Windows 文件系统的功能，对 WSL 路径走 `\\wsl.localhost` 的 9P 访问。
+- 插件的侧边栏要在 WSL 会话里可用，WSL 的 dsh 里也必须装同一个插件，否则它的 WSL 请求会失败。不指向任何会话的插件路由（共享资源、全局设置）始终由 Windows 处理。
+- 「在应用中打开」通过 `\\wsl.localhost`（9P）在 Windows 上打开 WSL 文件。
 - 工作区行没有供插件使用的扩展位，WSL 标记是插入到侧边栏页面中的；DSH 调整侧边栏结构后可能需要更新插件。
 
 ## 开发
@@ -161,6 +183,10 @@ Copy-Item "$p\package.json","$p\cordis.yml","$p\cordis.patch.yml","$p\pnpm-works
 New-Item -ItemType Junction -Path "$h\profiles\desktop\node_modules" -Target "$p\node_modules" | Out-Null
 $env:DSH_HOME = $h; $env:DSH_TELEMETRY_DISABLED = '1'; $env:DSH_CLIENT_VERSION = '0.2.1-rc.5'
 & $dsh --expose-internals --import ./test/resolve-boot.mjs test/boot-desktop.mjs "$h\profiles\desktop" (Get-Location).Path Ubuntu-26.04
+# WSL 会话的插件路由、发行版自己的模型目录、断开时的进程组清理
+& $dsh --expose-internals --import ./test/resolve-boot.mjs test/boot-wsl-session.mjs "$h\profiles\desktop" Ubuntu-26.04
+# 保持组合运行并开放网页界面，便于在浏览器里操作真实客户端
+& $dsh --expose-internals --import ./test/resolve-boot.mjs test/serve-desktop.mjs "$h\profiles\desktop" Ubuntu-26.04
 ```
 
 `server/agent.mjs`、`server/launch.sh`、`server/dsh-harness.sh` 或 `lib/mux.js` 变化时，请递增 `lib/remote.js` 中的 `AGENT_VERSION`。

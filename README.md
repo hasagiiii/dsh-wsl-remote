@@ -71,9 +71,9 @@ Open Settings → General → **WSL remote connections** and select **Connect** 
 - **Local**: the Windows folder dialog, as before.
 - **WSL**: choose a distribution, then a Linux folder picker opens in your Linux home. You can type a path (`~` works), go up, use the breadcrumbs, show hidden folders and create folders.
 
-The folder is registered as **a workspace of that distribution's dsh**: it appears in the WSL dsh's own UI, and in the Windows window. In the Windows window its path reads `\\wsl.localhost\<distro>\<Linux path>`, and a **WSL · <OS>** badge (for example `WSL · Ubuntu 26.04`) sits next to its name; the dot shows the connection state. Workspaces and sessions that already exist in the WSL dsh appear as well.
+The folder is registered as **a workspace of that distribution's dsh**: it appears in the WSL dsh's own UI, and in the Windows window. It keeps its Linux path (for example `/home/me/repo`) everywhere, in the Windows window too, and a **WSL · <OS>** badge (for example `WSL · Ubuntu 26.04`) sits next to its name; the dot shows the connection state. Workspaces and sessions that already exist in the WSL dsh appear as well.
 
-A `\\wsl.localhost\…` workspace added by an earlier version is merged with the WSL workspace of the same folder into one row. New sessions in it run in the WSL dsh; old sessions that ran on Windows stay where they are.
+A `\\wsl.localhost\…` workspace added by an earlier version is merged with the WSL workspace of the same folder into one row, shown with the Linux path. New sessions in it run in the WSL dsh; old sessions that ran on Windows stay where they are.
 
 ### Shared sign-in
 
@@ -109,34 +109,56 @@ Windows DeepSeek Harness Host
   │   └─ WSL sessions and workspaces → DeepSeek Harness's own Client packages
   │        (dsh-client-connection, dsh-api-gateway/client, dsh-typert-registry)
   │          └─ Windows loopback relay ⇄ wsl.exe stdio ⇄ your dsh in WSL
-  └─ session list, search, model catalog, workspaces, control stream, event stream: merged across hosts
+  └─ session list, search, workspaces, control stream, event stream: merged across hosts
+  Web server ── plugin routes (e.g. /sidebar/*) of WSL sessions → the same plugin in the WSL dsh
 ```
 
-- **Routing**: every Remote call names its session, agent or workspace. The merge remembers which host owns each session (from every host's session list, workspaces and events) and hands the call unchanged to that host; an unknown id is asked of Windows, then of each connected distribution. `session/create` and `workspace/create` pick the host from the workspace or the path (`\\wsl.localhost\<distro>\…`).
-- **Paths**: Linux paths returned by WSL (session directories, workspace paths, history snapshot headers) are shown as `\\wsl.localhost\<distro>\…` in the Windows window, and turned back into Linux paths before they go to WSL.
+### Which host a call belongs to
+
+Codex's window sends a `hostId` with every request. The DeepSeek Harness client has no such field: it talks to one Host and names sessions, agents and workspaces by id. The merge therefore works out the owner of each call from those ids, in this order:
+
+1. **The call names a workspace** (`session/create`, `workspace/rename`, `workspace/delete` and the other `workspace/*` calls that carry `workspaceId` but no `sessionId`). The merge keeps one workspace table built from every host's `workspace/follow` stream; each row records which host it came from (`owners`: merged id → `{ host, id on that host }`). The call goes to that host, with the id rewritten to the host's own.
+2. **The call creates a workspace** (`workspace/create`). The WSL folder picker sends `\\wsl.localhost\<distro>\<path>` only as an address: the distribution is read from it, and the workspace is created in that distribution's dsh with the Linux path. Any other path is a Windows folder.
+3. **The call names a session, agent or child**. Ids are read from the wire arguments: `agentId`, `workspaceFileScopeId`, `sessionId`, `parentSessionId`, `childSessionId`, `rootSessionId`, the same fields in `request`, and `request.address`. The first id with a known owner decides. Owners are learned from:
+   - each host's session list (`session/list` is merged from all hosts, and each row records where it came from);
+   - each host's workspace rows (`sessionIds`);
+   - `session/control` projections and `$events` (`api-session/added`, status, activity) of each distribution;
+   - the replies of `session/create` and `session/fork`, recorded the moment they return.
+4. **The id is unknown** (a session created elsewhere and not listed yet): Windows is asked first (its live sessions, then its persisted session store), then each connected distribution through `session/projections`. The first host that knows the id owns it, and the answer is remembered.
+5. **Nothing names a host** (`session/list`, `session/search`, the window's model catalog, settings, plugin manager, account): the call goes to Windows; the collections among them are merged with every distribution's.
+
+Plugin HTTP routes and WebSockets apply the same rule to the request: `?sessionId=` (and the other id parameters), a path segment that is a session id (`/sidebar/html/<sessionId>/…`), or an id field in a JSON body. A bare Linux path (a Markdown file link, `/api/file?path=`) goes to the distribution whose WSL workspace contains it (the deepest one), or to the only connected distribution.
+
+Results are remembered, so each id is resolved once. A workspace or session a distribution returns is recorded immediately, before its follow stream echoes it: the window creates a session in a WSL workspace in the same breath as adding it.
+
+- **Routing**: see above. The call itself is handed unchanged to its host, apart from merged workspace ids and the picker's `\\wsl.localhost` address.
+- **Paths**: WSL workspaces, session directories and history headers keep their Linux paths in the Windows window; the owning distribution is known from the workspace or session, never from the path. Only "Open in app" turns a Linux path into `\\wsl.localhost\<distro>\…`, because Windows opens the file.
 - **Merged streams**: `workspace/follow` sends the complete merged state on every change (`replace` frames); `session/control` puts each distribution's projections into the opening baseline and then forwards every host's increments; `$events` forwards the WSL sessions' events (status, activity, questions, approvals and more) and sends the Windows window's answers to questions and approvals back to the WSL dsh that asked.
-- **Exact routes**: session log export, raw file upload, `/api/file` and change comparisons are forwarded by `sessionId` or path.
+- **Files, terminal, git**: DSH's own file preview (`workspaceFiles/*`), terminal (`terminal/*`), jobs, goals and file upload name their session, so they run in WSL like Codex's `fs/*` and `command/exec`. Plugin routes do too: a plugin installed in both dsh instances (for example dsh-better-sidebar's file tree, editor, git view and terminal under `/sidebar/*`) answers a WSL session's requests from inside WSL, through the same plugin there. Exact routes (session log export, raw upload, `/api/file`, change comparisons) are forwarded by `sessionId` or path.
+- **Models**: the window's catalog is the Windows one. The model picker of a WSL session is built on that distribution's own catalog, so it lists, defaults to and checks the models the WSL dsh can route; a Windows session lists only Windows models.
+- **Shutdown**: the WSL dsh is started as the leader of its own process group and reports its pid and start time. When a connection ends, the group is ended too (TERM, then KILL), after checking the start time so a reused pid is never touched, so tools, MCP servers and terminals do not outlive it.
 - **Authentication**: the WSL dsh's documented API admission, `GET /connect?token=<launch token>&interactions=answer`, returns a signed API cookie that every HTTP request and the mux WebSocket then carry. WSL opens no non-loopback port.
 
 ### Source
 
 - `index.js`: the Host plugin: discovery, connections, settings routes, the folder picker, and installing the merge.
-- `lib/bridge/bridge.js`: the merge: routing, merged streams, and the Gateway and Fetch-route wrappers.
-- `lib/bridge/merge.js`: the pure parts: session ids of a call, workspace merging, path spelling, catalog merging.
+- `lib/bridge/bridge.js`: the merge: ownership, routing, merged streams, and the Gateway and Fetch-route wrappers.
+- `lib/bridge/routes.js`: plugin HTTP routes and WebSocket upgrades of WSL sessions, answered by the WSL dsh.
+- `lib/bridge/merge.js`: the pure parts: ids a call or request names, workspace merging, the distribution of a Linux path.
 - `lib/bridge/host-client.js`: the WSL dsh client, assembled from DeepSeek Harness's own Client packages.
 - `lib/remote.js`: one remote connection: deploy, version gate, launch, loopback relay, credential answers, reconnect with backoff.
 - `server/launch.sh`, `server/agent.mjs`: start `dsh` through the login shell; the agent is a Cordis plugin loaded with `dsh --patch` that runs only when the Windows Host started it.
 - `server/dsh-harness.sh`, `lib/requests.js`: the `dsh-harness` command.
-- `lib/linux-fs.js`: the WSL folder picker, and the mapping between Linux paths and `\\wsl.localhost` paths.
+- `lib/linux-fs.js`: the WSL folder picker, and reading the distribution and Linux path out of a `\\wsl.localhost` path.
 
 ## Limitations
 
 - The WSL dsh must be the same release as DeepSeek Harness on Windows: merged sessions speak the Windows side's Remote API.
-- The merge wraps DeepSeek Harness's internal Gateway dispatch (`dispatchRpc`, `openWireStream`) and the Connection's exact route table, so a DSH upgrade may need a plugin update (`engines.dsh`).
+- The merge wraps DeepSeek Harness's internal Gateway dispatch (`dispatchRpc`, `openWireStream`), the Connection's exact route table, the web server's route tables and the model picker's per-session directory, so a DSH upgrade may need a plugin update (`engines.dsh`). Ownership is inferred from ids (see above), not declared by the window as Codex's `hostId` is.
 - While a distribution is disconnected, its sessions stay listed with their last known state, and opening one reconnects it. Running streams break and the DSH client reconnects them as usual.
 - Only session-related events are merged. The WSL dsh's settings, plugin manager and account pages do not appear in the Windows window; open the WSL dsh's own UI for those.
-- The model catalog offers both sides' providers, and the default model stays the Windows one. A WSL session uses the models the WSL dsh can route; choosing a model that only Windows has is refused by WSL.
-- Windows-side features that touch the Windows file system directly, such as "Open in app" and the right-sidebar file view, reach WSL paths through `\\wsl.localhost` (9P).
+- A plugin's sidebar works for WSL sessions only when the same plugin is installed in the WSL dsh too; otherwise its WSL requests fail. A plugin route that names no session (shared assets, global settings) is always answered by Windows.
+- "Open in app" opens a WSL file on Windows through `\\wsl.localhost` (9P).
 - The workspace row has no extension slot for plugins, so the WSL badge is placed into the sidebar page; a change to the DSH sidebar structure may need a plugin update.
 
 ## Development
@@ -161,6 +183,10 @@ Copy-Item "$p\package.json","$p\cordis.yml","$p\cordis.patch.yml","$p\pnpm-works
 New-Item -ItemType Junction -Path "$h\profiles\desktop\node_modules" -Target "$p\node_modules" | Out-Null
 $env:DSH_HOME = $h; $env:DSH_TELEMETRY_DISABLED = '1'; $env:DSH_CLIENT_VERSION = '0.2.1-rc.5'
 & $dsh --expose-internals --import ./test/resolve-boot.mjs test/boot-desktop.mjs "$h\profiles\desktop" (Get-Location).Path Ubuntu-26.04
+# a WSL session's plugin routes, its distribution's model catalog, process-group cleanup on disconnect
+& $dsh --expose-internals --import ./test/resolve-boot.mjs test/boot-wsl-session.mjs "$h\profiles\desktop" Ubuntu-26.04
+# keep the composition running with its web UI, to drive the real client in a browser
+& $dsh --expose-internals --import ./test/resolve-boot.mjs test/serve-desktop.mjs "$h\profiles\desktop" Ubuntu-26.04
 ```
 
 Bump `AGENT_VERSION` in `lib/remote.js` when `server/agent.mjs`, `server/launch.sh`, `server/dsh-harness.sh` or `lib/mux.js` change.

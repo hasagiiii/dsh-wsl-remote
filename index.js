@@ -27,6 +27,7 @@ import { isDistro, isProfile, loadSettings, writeSettings } from './lib/state.js
 import { watchRequests } from './lib/requests.js';
 import { createLinuxDirectory, listLinuxDirectory, parseOsRelease, toUncPath } from './lib/linux-fs.js';
 import { WslBridge, wrapFetchRoutes, wrapGateway } from './lib/bridge/bridge.js';
+import { RouteForwarder } from './lib/bridge/routes.js';
 
 const packageDir = dirname(fileURLToPath(import.meta.url));
 const ROUTE = '/api/local-wsl-remote';
@@ -162,6 +163,10 @@ export default class WslRemoteService extends Service {
     ctx.inject(['connection'], (scope) => {
       scope.effect(() => wrapFetchRoutes(scope.connection, this.bridge), 'wsl-remote: Fetch route merge');
     });
+    // Plugin routes (e.g. a file-tree sidebar's /sidebar/*) of WSL sessions are answered by the same plugin in WSL.
+    ctx.inject(['connection', 'webServer'], (scope) => {
+      scope.effect(() => new RouteForwarder({ bridge: this.bridge, connection: scope.connection, logger: ctx.logger }).install(scope.webServer), 'wsl-remote: plugin route merge');
+    });
 
     ctx.inject(['tools'], (scope) => {
       scope.tools.register({
@@ -244,7 +249,13 @@ export default class WslRemoteService extends Service {
           autoConnect: this.settings.autoConnect.includes(entry.name),
           ...(await this.distroInfo(entry.name).catch(() => ({}))),
         })));
-        return { distros };
+        return { distros, workspaces: this.bridge.workspaceHosts() };
+      });
+      // One distribution's own model catalog, for its sessions' model picker.
+      route('model-catalog', ['POST'], async (request) => {
+        const { distro } = await body(request);
+        await this.known(distro);
+        return { catalog: await this.bridge.modelCatalog(distro) };
       });
       // Folders `dsh-harness` asked to open. Every window polls; the first to claim one adds it.
       route('open-requests', ['GET'], () => {

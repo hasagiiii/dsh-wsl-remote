@@ -15,6 +15,12 @@ register(`data:text/javascript,${encodeURIComponent(`
     if (bare && context.parentURL && context.parentURL.toLowerCase().startsWith(tests)) {
       return next(specifier, { ...context, parentURL: anchor });
     }
-    return next(specifier, context);
+    try {
+      return await next(specifier, context);
+    } catch (error) {
+      // Profile plugins resolve DSH runtime packages through the Host, as the Desktop's runtime resolution does.
+      if (bare && specifier.startsWith('@deepseek-ai/')) return next(specifier, { ...context, parentURL: anchor });
+      throw error;
+    }
   }
 `)}`);
