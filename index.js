@@ -15,21 +15,35 @@
  *    the Windows store under its writer lock.
  * Nothing in the Windows composition is replaced.
  */
+import { execFile } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { Service } from '@deepseek-ai/cordis';
 import schema from '@deepseek-ai/schemastery';
-import { listDistros, runWsl } from './lib/wsl.js';
+import { listDistros } from './lib/wsl.js';
 import { RemoteConnection } from './lib/remote.js';
 import { MIN_DSH_VERSION } from './lib/version.js';
 import { isDistro, isProfile, loadSettings, writeSettings } from './lib/state.js';
 import { watchRequests } from './lib/requests.js';
-import { createLinuxDirectory, listLinuxDirectory, parseOsRelease, toUncPath } from './lib/linux-fs.js';
+import { createLinuxDirectory, listLinuxDirectory, parseOsRelease, remoteHome, toRemoteAddress, toUncPath } from './lib/linux-fs.js';
+import { hostKind, isSshDest, isSshHost, readSshConfigHosts, runOn, sshDestOf, sshHostId } from './lib/transport.js';
 import { WslBridge, wrapFetchRoutes, wrapGateway } from './lib/bridge/bridge.js';
 import { RouteForwarder } from './lib/bridge/routes.js';
+import { loadBridgeCache, writeBridgeCache } from './lib/bridge/cache.js';
 import { comparePlugins } from './lib/plugins.js';
 import { PluginInstalls } from './lib/installs.js';
+import { createModelService } from './lib/models.js';
+import { createModelPluginService } from './lib/model-plugins.js';
+import { PluginSyncRuns } from './lib/plugin-sync.js';
+import { inspectGitSource } from './lib/git-source.js';
+
+/** `git <args>` on Windows, bounded; never through a shell. */
+const windowsGit = (args) => new Promise((resolve) => {
+  execFile('git', args, { windowsHide: true, timeout: 15000, maxBuffer: 1024 * 1024 }, (error, stdout) => {
+    resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, stdout: String(stdout ?? '') });
+  });
+});
 
 const packageDir = dirname(fileURLToPath(import.meta.url));
 const ROUTE = '/api/local-wsl-remote';
@@ -108,16 +122,23 @@ export default class WslRemoteService extends Service {
     }
 
     this.ready.then(() => {
-      for (const distro of this.settings.autoConnect) {
-        if (this.distros.some((entry) => entry.name === distro)) this.connection(distro).connect().catch(() => {});
+      for (const host of this.settings.autoConnect) {
+        if (this.hostIds().includes(host)) this.connection(host).connect().catch(() => {});
       }
     });
 
-    // The merge: WSL sessions and workspaces in this window.
+    // The merge: remote (WSL and SSH) sessions and workspaces in this window.
+    const cacheProfile = this.settings.profile;
     this.bridge = new WslBridge({
       logger: ctx.logger,
+      cache: {
+        load: () => loadBridgeCache(cacheProfile),
+        save: (hosts) => {
+          if (this.settings.profile === cacheProfile) writeBridgeCache(cacheProfile, hosts);
+        },
+      },
       hosts: {
-        distros: () => this.distros.map((entry) => entry.name),
+        distros: () => this.hostIds(),
         connected: (distro) => this.connections.get(distro)?.state === 'connected',
         url: (distro) => this.connections.get(distro)?.openUrl(),
         ensure: (distro) => this.ensureConnected(distro),
@@ -160,10 +181,96 @@ export default class WslRemoteService extends Service {
       return () => this.bridge.stop();
     }, 'wsl-remote: WSL session bridge');
     // Plugin installs into a distribution, as background jobs the WSL plugins panel polls.
-    this.installs = new PluginInstalls({ client: (distro) => this.bridge.client(distro), events: this.bridge });
+    this.installs = new PluginInstalls({ client: (distro) => distro === null
+      ? { call: (endpoint, { args }) => this.callModelHost(null, endpoint, args) }
+      : this.bridge.client(distro), events: this.bridge });
     ctx.effect(() => () => this.installs.dispose(), 'wsl-remote: plugin installs');
+    for (const event of ['plugin-manager/install-state', 'plugin-manager/install-log']) {
+      ctx.on?.(event, (value) => this.installs.observe({ distro: null, event, value }));
+    }
+    this.callModelHost = async (host, endpoint, args) => {
+        if (host !== null) {
+          await this.known(host);
+          const client = await this.bridge.client(host);
+          return client.call(endpoint, { args });
+        }
+        // Exact Fetch routes are admitted as owner by Connection. They do not
+        // expose a Remote Peer, so invoke local services rather than fabricate one.
+        const methods = {
+          'llm/listProviders': ['llm', 'listProviders', []],
+          'llm/listConfigurableProviders': ['llm', 'listConfigurableProviders', []],
+          'llm/discoverModels': ['llm', 'discoverModels', [args.settingsNs, args.request]],
+          'settings/describe': ['settingsController', 'describe', []],
+          'settings/mutate': ['settingsController', 'mutate', [args.ns, args.ops, args.expectedRevision]],
+          'credentials/describe': ['credentialsController', 'describe', [args.refs]],
+          'credentials/set': ['credentialsController', 'set', [args.ref, args.value]],
+          'credentials/unset': ['credentialsController', 'unset', [args.ref]],
+          'session/modelCatalog': ['sessionController', 'modelCatalog', []],
+          'pluginManager/listBundles': ['pluginManager', 'listBundles', []],
+          'pluginManager/installBundle': ['pluginManager', 'installBundle', [args.spec, args.options]],
+          'pluginManager/cancelInstall': ['pluginManager', 'cancelInstall', [args.requestId]],
+          'pluginManager/setBundleEnabled': ['pluginManager', 'setBundleEnabled', [args.name, args.enabled]],
+        };
+        const method = methods[endpoint];
+        if (!method) throw new Error('Unsupported model operation');
+        const [serviceName, name, parameters] = method;
+        const service = ctx.get(serviceName);
+        if (!service) throw new Error(`Windows service is unavailable: ${serviceName}`);
+        try { return { ok: true, value: await service[name](...parameters) }; }
+        catch (error) { return { ok: false, error: { code: error.code ?? 'models/failed', message: error.message } }; }
+    };
+    this.models = createModelService({
+      call: this.callModelHost,
+      // API key values for model sync: Windows' own store here, a remote host's
+      // through its agent. They stay inside this Host process.
+      secrets: {
+        read: async (host, ref) => {
+          if (host !== null) {
+            await this.known(host);
+            return this.connection(host).resolveCredential(ref);
+          }
+          const credentials = this.ctx.get('credentials');
+          if (credentials === undefined) throw new Error('Windows has no credential provider');
+          const hit = await credentials.resolve(ref);
+          return typeof hit?.value === 'string' && hit.value.length > 0 ? hit.value : undefined;
+        },
+      },
+    });
+    this.modelPlugins = createModelPluginService({ call: this.callModelHost });
+    // Plugin sync between any two hosts (Windows, WSL, SSH), through each target's own plugin manager.
+    const pluginCall = async (host, endpoint, args) => {
+      const result = await this.callModelHost(host, endpoint, args);
+      if (!result.ok) throw new Error(`${result.error.code}: ${result.error.message}`);
+      return result.value;
+    };
+    this.pluginSync = new PluginSyncRuns({
+      list: async (host) => {
+        const value = await pluginCall(host, 'pluginManager/listBundles', {});
+        return Array.isArray(value) ? value : [];
+      },
+      enable: (host, name) => pluginCall(host, 'pluginManager/setBundleEnabled', { name, enabled: true }),
+      installs: this.installs,
+      // A local source folder is inspected with git on the host it belongs to.
+      gitSource: (host, dir) => inspectGitSource(
+        host === null ? windowsGit : (args) => runOn(host, ['git', ...args], { timeoutMs: 20000 }),
+        dir,
+        { windows: host === null },
+      ),
+    });
+    this.providerPluginPlan = async (selector) => {
+      const plan = await this.modelPlugins.plan(selector);
+      return { ...plan, name: plan.targetBundleName ?? plan.sourceBundleName ?? plan.sourceBundle?.name, spec: plan.installSpec };
+    };
+    ctx.effect(() => () => this.models.dispose(), 'wsl-remote: model sync previews');
     ctx.inject(['typertGateway'], (scope) => {
-      scope.effect(() => wrapGateway(scope.typertGateway, this.bridge), 'wsl-remote: Gateway merge');
+      scope.effect(() => {
+        const dispose = wrapGateway(scope.typertGateway, this.bridge);
+        this.bridgeReady = true;
+        return () => {
+          this.bridgeReady = false;
+          dispose();
+        };
+      }, 'wsl-remote: Gateway merge');
     });
     ctx.inject(['connection'], (scope) => {
       scope.effect(() => wrapFetchRoutes(scope.connection, this.bridge), 'wsl-remote: Fetch route merge');
@@ -176,7 +283,7 @@ export default class WslRemoteService extends Service {
     ctx.inject(['tools'], (scope) => {
       scope.tools.register({
         name: 'wsl_remote_connections',
-        description: 'List WSL remote connections: each WSL 2 distribution runs the user\'s own DeepSeek Harness (its WSL `dsh`, with its own models, plugins, sessions and Linux files); its WSL workspaces and sessions appear in this window. Reports connection state, the WSL dsh version and whether sign-in is shared with Windows. Read-only; connecting is a user action in Settings → General.',
+        description: 'List remote connections: each WSL 2 distribution and each SSH host the user added runs the user\'s own DeepSeek Harness (its `dsh`, with its own models, plugins, sessions and Linux files); its workspaces and sessions appear in this window. Reports connection state, the remote dsh version and whether sign-in is shared with Windows. Read-only; connecting is a user action in Settings → General.',
         parameters: { type: 'object', properties: {}, additionalProperties: false },
         output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }] },
         isConcurrencySafe: () => true,
@@ -230,7 +337,36 @@ export default class WslRemoteService extends Service {
         this.save(next);
         return this.status();
       });
-      // Linux folder picker for "Add workspace → WSL: <distro>".
+      // SSH hosts: added by destination (`[user@]host[:port]` or a ~/.ssh/config alias), then used like distributions.
+      route('ssh/add', ['POST'], async (request) => {
+        const { dest } = await body(request);
+        const value = typeof dest === 'string' ? dest.trim() : '';
+        if (!isSshDest(value)) throw new Error('Enter an SSH destination such as user@host, host:2222 or a Host alias from ~/.ssh/config');
+        if (!this.settings.sshHosts.includes(value)) this.save({ ...this.settings, sshHosts: [...this.settings.sshHosts, value] });
+        return this.status();
+      });
+      route('ssh/remove', ['POST'], async (request) => {
+        const { distro } = await body(request);
+        if (!isSshHost(distro)) throw new Error(`Unknown SSH host: ${String(distro)}`);
+        await this.connections.get(distro)?.disconnect();
+        this.connections.delete(distro);
+        this.infoCache?.delete(distro);
+        const dest = sshDestOf(distro);
+        const { [distro]: _port, ...ports } = this.settings.ports;
+        this.save({
+          ...this.settings,
+          sshHosts: this.settings.sshHosts.filter((entry) => entry !== dest),
+          autoConnect: this.settings.autoConnect.filter((entry) => entry !== distro),
+          ports,
+        });
+        for (const listener of this.hostListeners) {
+          try {
+            listener();
+          } catch {}
+        }
+        return this.status();
+      });
+      // Linux folder picker for "Add workspace → WSL / SSH".
       route('linux/list', ['POST'], async (request) => {
         const { distro, path } = await body(request);
         await this.known(distro);
@@ -241,22 +377,60 @@ export default class WslRemoteService extends Service {
         const { distro, parent, name } = await body(request);
         await this.known(distro);
         const path = await createLinuxDirectory(distro, parent, name);
-        return { path, unc: toUncPath(distro, path) };
+        return { path, unc: toRemoteAddress(distro, path) };
       });
-      // Badge data for every distribution, connected or not: WSL workspaces of a
-      // disconnected distribution still show which OS they live on.
+      // Badge data for every remote host, connected or not: remote workspaces of a
+      // disconnected host still show which OS they live on.
       route('distros', ['GET'], async () => {
         await this.fresh();
-        const distros = await Promise.all(this.distros.map(async (entry) => ({
-          name: entry.name,
-          isDefault: entry.isDefault,
+        const distros = await Promise.all(this.hostEntries().map(async (entry) => ({
+          ...entry,
           state: this.connections.get(entry.name)?.state ?? 'disconnected',
           autoConnect: this.settings.autoConnect.includes(entry.name),
-          ...(await this.distroInfo(entry.name).catch(() => ({}))),
+          // SSH hosts are not woken up for a badge; their facts come from the last probe.
+          ...(entry.kind === 'wsl' || this.connections.get(entry.name)?.facts ? await this.distroInfo(entry.name).catch(() => ({})) : {}),
         })));
         return { distros, workspaces: this.bridge.workspaceHosts() };
       });
       // One distribution's own model catalog, for its sessions' model picker.
+      route('models/rpc', ['POST'], async (request) => {
+        const { distro, endpoint, args } = await body(request);
+        await this.known(distro);
+        return this.models.rpc(distro, endpoint, args);
+      });
+      route('models/provider-plugin', ['POST'], async (request) => {
+        const { distro, direction, provider, settingsNs } = await body(request);
+        await this.known(distro);
+        return this.providerPluginPlan({ distro, direction, provider, settingsNs });
+      });
+      route('models/install-provider', ['POST'], async (request) => {
+        const { distro, direction, provider, settingsNs, expected } = await body(request);
+        await this.known(distro);
+        const plan = await this.providerPluginPlan({ distro, direction, provider, settingsNs });
+        if (!expected || expected.status !== plan.status || expected.name !== plan.name || expected.spec !== plan.spec) {
+          throw new Error('Provider plugin changed; refresh the provider sync preview before installing');
+        }
+        if (plan.status === 'install') return { job: this.installs.start(plan.targetHost, plan.installSpec) };
+        if (plan.status === 'enable') {
+          const result = await this.callModelHost(plan.targetHost, 'pluginManager/setBundleEnabled', { name: plan.targetBundleName, enabled: true });
+          if (!result.ok) throw new Error(result.error?.message ?? 'Unable to enable provider plugin');
+          if (['failed', 'cancelled', 'overridden'].includes(result.value?.application)) {
+            throw new Error(result.value.error?.diagnostic ?? result.value.error?.message ?? 'Provider plugin could not be enabled');
+          }
+          return { result: result.value };
+        }
+        if (plan.status === 'available') return { result: { application: 'applied' } };
+        throw new Error(`Provider plugin is unavailable: ${plan.reason}`);
+      });
+      route('models/preview', ['POST'], async (request) => {
+        const { distro, direction, provider, settingsNs } = await body(request);
+        await this.known(distro);
+        return this.models.preview({ distro, direction, provider, settingsNs });
+      });
+      route('models/apply', ['POST'], async (request) => {
+        const { token, credentials } = await body(request);
+        return this.models.apply({ token, credentials: credentials === true });
+      });
       route('model-catalog', ['POST'], async (request) => {
         const { distro } = await body(request);
         await this.known(distro);
@@ -302,6 +476,30 @@ export default class WslRemoteService extends Service {
         if (typeof id !== 'string') throw new Error('an installation id is required');
         return { job: await this.installs.cancel(id) };
       });
+      // Plugin sync between two hosts: `null` is Windows, else a distribution or `ssh:<dest>`.
+      const syncHost = async (host) => {
+        if (host === null || host === 'windows') return null;
+        await this.known(host);
+        return host;
+      };
+      route('plugins/sync-plan', ['POST'], async (request) => {
+        const { source, target } = await body(request);
+        return this.pluginSync.plan(await syncHost(source ?? null), await syncHost(target ?? null));
+      });
+      route('plugins/sync', ['POST'], async (request) => {
+        const { source, target, names } = await body(request);
+        return { run: await this.pluginSync.start(await syncHost(source ?? null), await syncHost(target ?? null), names) };
+      });
+      route('plugins/sync-status', ['POST'], async (request) => {
+        const { id, target } = await body(request);
+        const run = typeof id === 'string' ? this.pluginSync.get(id) : target !== undefined ? this.pluginSync.latest(target === 'windows' ? null : target) : undefined;
+        return { run: run ?? null };
+      });
+      route('plugins/sync-cancel', ['POST'], async (request) => {
+        const { id } = await body(request);
+        if (typeof id !== 'string') throw new Error('a sync id is required');
+        return { run: await this.pluginSync.cancel(id) };
+      });
       // Restart a distribution's dsh so plugin changes that wait for a restart take effect.
       route('restart', ['POST'], async (request) => {
         const { distro } = await body(request);
@@ -342,14 +540,13 @@ export default class WslRemoteService extends Service {
     let pending = this.infoCache.get(distro);
     if (pending === undefined) {
       pending = (async () => {
-        // `cat` rather than sh printf: no format string has to survive wsl.exe argument passing.
+        // `cat` rather than sh printf: no format string has to survive wsl.exe or ssh argument passing.
         const [osRelease, home] = await Promise.all([
-          runWsl(['-d', distro, '-e', 'cat', '/etc/os-release'], { timeoutMs: 60000 }),
-          runWsl(['-d', distro, '--cd', '~', '-e', 'sh', '-c', 'printf %s "$HOME"'], { timeoutMs: 60000 }),
+          runOn(distro, ['cat', '/etc/os-release'], { timeoutMs: 60000 }),
+          remoteHome(distro).catch(() => undefined),
         ]);
         const os = parseOsRelease(osRelease.code === 0 ? osRelease.stdout : '');
-        const linuxHome = home.stdout.trim();
-        return { ...(os ? { os } : {}), ...(linuxHome.startsWith('/') ? { home: linuxHome } : {}) };
+        return { ...(os ? { os } : {}), ...(home ? { home } : {}) };
       })();
       pending.catch(() => this.infoCache.delete(distro));
       this.infoCache.set(distro, pending);
@@ -373,7 +570,7 @@ export default class WslRemoteService extends Service {
       const listed = await this.ctx.get('pluginManager')?.listBundles?.();
       if (Array.isArray(listed)) windowsBundles = listed;
     } catch {}
-    return { distro, ...comparePlugins(remote.value, windowsBundles) };
+    return { distro, ...comparePlugins(remote.value, windowsBundles, hostKind(distro)) };
   }
 
   /** Run one discovery (single-flight). A failure keeps the previous list and records the reason. */
@@ -412,7 +609,24 @@ export default class WslRemoteService extends Service {
     this.save({ ...this.settings, autoConnect: [...set] });
   }
 
+  /** Every remote host id: WSL distributions, then the SSH hosts the user added (`ssh:<dest>`). */
+  hostIds() {
+    return [...this.distros.map((entry) => entry.name), ...this.settings.sshHosts.map(sshHostId)];
+  }
+
+  /** One row per remote host for the UI: { name, kind, isDefault?, dest? }. */
+  hostEntries() {
+    return [
+      ...this.distros.map((entry) => ({ name: entry.name, kind: 'wsl', isDefault: entry.isDefault })),
+      ...this.settings.sshHosts.map((dest) => ({ name: sshHostId(dest), kind: 'ssh', dest })),
+    ];
+  }
+
   async known(distro) {
+    if (isSshHost(distro)) {
+      if (!this.settings.sshHosts.includes(sshDestOf(distro))) throw new Error(`Unknown SSH host: ${sshDestOf(distro)}`);
+      return;
+    }
     await this.fresh();
     if (isDistro(distro) && !this.distros.some((entry) => entry.name === distro)) await this.discover();
     if (!isDistro(distro) || !this.distros.some((entry) => entry.name === distro)) throw new Error(`Unknown WSL distribution: ${String(distro)}`);
@@ -428,7 +642,8 @@ export default class WslRemoteService extends Service {
         settings: () => this.settings,
         rememberPort: (name, port) => this.save({ ...this.settings, ports: { ...this.settings.ports, [name]: port } }),
         credentials: () => this.ctx.get('credentials'),
-        launcher: this.windowsExe === undefined ? undefined : { windowsExe: this.windowsExe, requestDir: requestDir() },
+        // `dsh-harness` reaches Windows through WSL interop; an SSH host has none.
+        launcher: this.windowsExe === undefined || hostKind(distro) !== 'wsl' ? undefined : { windowsExe: this.windowsExe, requestDir: requestDir() },
         onCredentialEvents: (onRecord, onRef) => {
           const offRecord = this.ctx.on('credentials/record-updated', onRecord);
           const offRef = this.ctx.on('credentials/reference-updated', onRef);
@@ -490,15 +705,18 @@ export default class WslRemoteService extends Service {
       platform: process.platform,
       ...(this.discoveryError !== undefined ? { discoveryError: this.discoveryError } : {}),
       minimumDsh: MIN_DSH_VERSION,
+      bridgeReady: this.bridgeReady === true,
       shareLogin: this.settings.shareLogin,
       profile: this.settings.profile,
       credentialsAvailable: this.ctx.get('credentials') !== undefined,
       launcherAvailable: this.windowsExe !== undefined,
       ...(this.migrated ? { migratedFromStartupMode: true } : {}),
-      distros: this.distros.map((entry) => ({
-        isDefault: entry.isDefault,
+      sshAvailable: true,
+      sshConfigHosts: readSshConfigHosts().filter((dest) => !this.settings.sshHosts.includes(dest)),
+      distros: this.hostEntries().map((entry) => ({
+        ...(entry.isDefault !== undefined ? { isDefault: entry.isDefault } : {}),
         autoConnect: this.settings.autoConnect.includes(entry.name),
-        ...(this.connections.get(entry.name)?.snapshot() ?? { name: entry.name, state: 'disconnected' }),
+        ...(this.connections.get(entry.name)?.snapshot() ?? { name: entry.name, kind: entry.kind, ...(entry.dest ? { dest: entry.dest } : {}), state: 'disconnected' }),
       })),
     };
   }

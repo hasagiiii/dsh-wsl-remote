@@ -2,12 +2,53 @@ window.__ModuleLoader__.load({
   id: '@local/dsh-wsl-remote',
   factory(require) {
     const React = require('react');
+    const { createPortal } = require('react-dom');
     const h = React.createElement;
     const NS = 'localWslRemote';
     const POLL_MS = 3000;
 
     const dictionaries = {
       zh: {
+        'models.host': '模型配置位置',
+        'models.sync': '同步模型配置',
+        'models.preview': '预览同步',
+        'models.apply': '确认同步',
+        'models.cancel': '取消',
+        'models.refresh': '刷新模型',
+        'models.busy': '处理中…',
+        'models.direction': '同步方向',
+        'models.toWsl': 'Windows → WSL',
+        'models.toWindows': 'WSL → Windows',
+        'models.hint': '点击供应商上的同步按钮，将它的配置同步到另一端。目标端缺少对应插件时可先安装。保留目标端独有项；可以勾选同时复制它的 API Key。',
+        'models.copyKeys': '同时复制 API Key：',
+        'models.keyUpdate': '目标端的值不同，将被覆盖',
+        'models.doneKeys': '模型配置同步完成，已复制 API Key：{refs}。',
+        'models.noConfigChanges': '配置已一致，只需复制 API Key。',
+        'models.syncToWsl': '同步到 {kind}',
+        'models.syncToWindows': '同步到 Windows',
+        'models.installProvider': '安装供应商插件',
+        'models.enableProvider': '启用供应商插件',
+        'models.installHint': '目标端尚未安装此供应商的插件。安装后将预览配置差异，再确认同步。',
+        'models.enableHint': '目标端已安装此插件，但尚未启用。启用后可预览配置差异。',
+        'models.installStatus': '插件安装：',
+        'models.installLog': '查看安装日志',
+        'models.cancelInstall': '取消安装',
+        'models.installFailed': '插件安装未完成，请查看安装日志。',
+        'models.ownerMissing': '无法从插件清单中确认这个供应商所属的安装包。请检查来源端插件状态。',
+        'models.ownerAmbiguous': '多个插件声明了这个供应商的设置，无法确定应安装哪一个。',
+        'models.providerUnavailable': '供应商尚未可用。请确认插件已加载，并刷新模型列表。',
+        'models.incompatible': '目标端的插件不兼容，请先在插件管理中处理版本问题。',
+        'models.localPath': '此本地插件的路径无法在另一平台使用。请发布插件，或将其放在两端可访问的 Windows 目录中。',
+        'models.sourceMissing': '未找到这个插件的安装来源，无法自动安装。',
+        'models.pluginUnavailable': '无法读取或启用供应商插件，请检查两端连接和插件状态。',
+        'models.installLost': '未找到安装任务，请刷新供应商状态。',
+        'models.restartRequired': '插件已安装，需要按插件提示重新加载目标端后，再次点击供应商同步按钮。',
+        'models.connectFirst': '连接所选远程主机后，即可管理和同步它的模型。',
+        'models.noChanges': '没有需要同步的配置差异。',
+        'models.missing': '目标端需要配置以下 API Key：',
+        'models.done': '模型配置同步完成。',
+        'models.partial': '同步未全部完成，已写入的配置已保留。请刷新预览后重试。',
+        'models.changed': '将更新的配置',
         'title': 'WSL 远程连接',
         'description': '每个 WSL 发行版都是一台远程主机（与 Codex 相同）：连接后在 WSL 中启动你自己安装的 dsh，使用 WSL 的 ~/.dsh、模型、插件和原生 Linux 文件。它的工作区和会话直接显示在这个窗口里，与 Windows 会话并列，无需重启。',
         'loading': '正在检测 WSL…',
@@ -61,7 +102,7 @@ window.__ModuleLoader__.load({
         'ws.next': '下一步',
         'ws.cancel': '取消',
         'ws.notConnected': '{distro} 尚未连接。添加后会自动连接，并在 WSL 中你自己的 dsh 里运行该工作区的会话。',
-        'picker.title': '选择文件夹 · WSL: {distro}',
+        'picker.title': '选择文件夹 · {distro}',
         'picker.up': '上一级',
         'picker.home': '主目录',
         'picker.path': '文件夹路径',
@@ -81,6 +122,9 @@ window.__ModuleLoader__.load({
         'badge.titleNoOs': 'WSL 工作区 · {distro} · {state}',
         'open.done': '已从 WSL 打开：{path}',
         'plugins.toggle': 'WSL 插件',
+        'plugins.connectFirst': '连接 {distro} 后可查看和管理它的插件。',
+        'plugins.refresh': '刷新插件列表',
+        'plugins.scope': '安装位置：{distro} · profile {profile}',
         'plugins.title': '{distro} 中的插件',
         'plugins.desc': 'WSL 会话的 Agent 侧（工具、技能、MCP、模型）用这里的插件；界面和这个窗口的插件管理页始终是 Windows 的。插件的侧边栏要在 WSL 会话里可用，两边都要装。',
         'plugins.loading': '正在读取 WSL 中的插件…',
@@ -119,8 +163,112 @@ window.__ModuleLoader__.load({
         'plugins.waitingOutput': '等待 pnpm 输出…',
         'plugins.installed': '已安装 {name}。',
         'plugins.cancelled': '已取消安装，WSL 的配置已还原。',
+        'ssh.title': 'SSH 远程主机',
+        'ssh.description': '用法与 WSL 相同：连接后在服务器上启动你自己安装的 dsh（npm i -g @deepseek-ai/dsh），它的工作区和会话显示在这个窗口里。通过 Windows 自带的 OpenSSH 连接，使用 ~/.ssh/config 和你的密钥；服务器无需开放额外端口。',
+        'ssh.placeholder': 'user@host、host:端口 或 ~/.ssh/config 中的 Host',
+        'ssh.add': '添加',
+        'ssh.remove': '移除',
+        'ssh.removeConfirm': '移除 SSH 主机 {dest}？已有会话仍保留在服务器上。',
+        'ssh.fromConfig': '来自 ~/.ssh/config：',
+        'ssh.none': '尚未添加 SSH 主机。',
+        'ssh.hint.auth': 'SSH 认证失败。连接以非交互方式进行，不能输入密码：请配置密钥登录（ssh-copy-id，或把公钥加入服务器的 ~/.ssh/authorized_keys），必要时先运行 ssh-add。',
+        'ssh.hint.host-key': '主机密钥未被信任或已变化。请先在 PowerShell 中运行 ssh {dest} 确认主机密钥，然后点「重试」。',
+        'ssh.hint.network': '无法连接到服务器，请检查地址、端口和网络。',
+        'req.terminalSsh': '在 Windows 终端中运行 ssh {dest} 登录服务器后执行以上命令',
+        'ws.ssh': 'SSH',
+        'ws.sshDesc': '在 SSH 远程主机上选择文件夹',
+        'ws.sshNone': '请先在 设置 → 通用 中添加 SSH 主机',
+        'ws.host': '主机',
+        'ws.notConnectedSsh': '{distro} 尚未连接。添加后会自动连接，并在服务器上你自己的 dsh 里运行该工作区的会话。',
+        'badge.titleSsh': 'SSH 工作区 · {distro}（{os}）· {state}',
+        'badge.titleSshNoOs': 'SSH 工作区 · {distro} · {state}',
+        'plugins.hostTab': '远程主机',
+        'sync.title': '同步插件',
+        'sync.desc': '把一台主机上用户安装的插件装到另一台主机（版本与来源一致），用目标主机自己的插件管理器逐个安装。目标主机上多出来的插件不会被删除。',
+        'sync.from': '从',
+        'sync.to': '到',
+        'sync.swap': '交换',
+        'sync.load': '比较',
+        'sync.loading': '正在比较两台主机的插件…',
+        'sync.selectAll': '全选可同步项',
+        'sync.oneTitle': '只同步 {name}',
+        'sync.run': '同步所选（{count}）',
+        'sync.cancel': '停止同步',
+        'sync.close': '关闭',
+        'sync.nothing': '没有需要同步的插件：两边已一致。',
+        'sync.connectFirst': '两台主机都连接后才能同步插件。',
+        'sync.same': '两边都要选，且不能是同一台主机。',
+        'sync.targetOnly': '仅目标主机有（保留不动）：',
+        'sync.state.missing': '目标缺少',
+        'sync.state.differ': '目标为 {version}',
+        'sync.state.disabled': '目标已安装但停用',
+        'sync.state.same': '已一致',
+        'sync.state.builtin': '目标内置',
+        'sync.state.error': '目标加载出错：{reason}',
+        'sync.state.unsupported': '无法自动同步',
+        'sync.reason.local-path': '它从本地文件夹安装（{source}），目标主机访问不到这个路径。请发布到 npm / git，或放到两边都能访问的位置。',
+        'sync.reason.source-missing': '来源主机没有记录它的安装来源。',
+        'sync.reason.git-unpushed': '它从本地文件夹安装（{source}），目标主机访问不到这个路径；这个文件夹是 git 仓库，但当前提交还没有推送到任何远程分支。推送后重新比较即可从 git 安装。',
+        'sync.reason.git-remote': '它从本地文件夹安装（{source}），目标主机访问不到这个路径；这个 git 仓库的远程地址不是目标主机能用的网络地址。',
+        'sync.reason.git-subfolder': '它从本地文件夹安装（{source}），目标主机访问不到这个路径；这个文件夹位于某个 git 仓库的子目录中，无法直接从 git 安装。',
+        'sync.git.from': '将从 git 安装：{remote} @ {commit}。',
+        'sync.git.unpushed': '本地还有 {count} 个提交未推送，不包含在内。',
+        'sync.git.dirty': '未提交的修改不包含在内。',
+        'sync.action.install': '安装',
+        'sync.action.update': '更新到 {version}',
+        'sync.action.enable': '启用',
+        'sync.item.pending': '等待',
+        'sync.item.running': '进行中',
+        'sync.item.done': '完成',
+        'sync.item.failed': '失败',
+        'sync.item.cancelled': '已取消',
+        'sync.item.skipped': '已跳过',
+        'sync.done': '插件同步完成。',
+        'sync.failed': '部分插件同步失败，详见上方。',
+        'sync.restartRemote': '目标主机上的 dsh 需要重启才能加载这些插件。',
+        'sync.restartWindows': '需要重启 DeepSeek Harness 才能加载这些插件。',
       },
       en: {
+        'models.host': 'Model configuration host',
+        'models.sync': 'Sync model configuration',
+        'models.preview': 'Preview sync',
+        'models.apply': 'Confirm sync',
+        'models.cancel': 'Cancel',
+        'models.refresh': 'Refresh models',
+        'models.busy': 'Working…',
+        'models.direction': 'Sync direction',
+        'models.toWsl': 'Windows → WSL',
+        'models.toWindows': 'WSL → Windows',
+        'models.hint': 'Use each provider’s sync button to copy its configuration to the other host. Install its plugin first if needed. Target-only entries are preserved; you can choose to copy its API keys too.',
+        'models.copyKeys': 'Also copy API keys:',
+        'models.keyUpdate': 'the target has a different value, which will be replaced',
+        'models.doneKeys': 'Model configuration synced; API keys copied: {refs}.',
+        'models.noConfigChanges': 'The configuration already matches; only API keys need copying.',
+        'models.syncToWsl': 'Sync to {kind}',
+        'models.syncToWindows': 'Sync to Windows',
+        'models.installProvider': 'Install provider plugin',
+        'models.enableProvider': 'Enable provider plugin',
+        'models.installHint': 'This provider’s plugin is missing on the target. Install it, then preview and confirm the configuration sync.',
+        'models.enableHint': 'The target has this plugin installed but disabled. Enable it to preview the configuration sync.',
+        'models.installStatus': 'Plugin installation:',
+        'models.installLog': 'View installation log',
+        'models.cancelInstall': 'Cancel installation',
+        'models.installFailed': 'Plugin installation did not finish. Check the installation log.',
+        'models.ownerMissing': 'The plugin inventory does not identify the bundle that owns this provider. Check the source plugin status.',
+        'models.ownerAmbiguous': 'Multiple plugins declare these provider settings. The bundle to install cannot be determined.',
+        'models.providerUnavailable': 'The provider is not available yet. Check that its plugin has loaded, then refresh the model list.',
+        'models.incompatible': 'The target plugin is incompatible. Resolve its version issue in the plugin manager first.',
+        'models.localPath': 'This local plugin path cannot be used on the other platform. Publish it or place it on a Windows drive accessible to both hosts.',
+        'models.sourceMissing': 'No installation source was recorded for this plugin, so it cannot be installed automatically.',
+        'models.pluginUnavailable': 'The provider plugin could not be read or enabled. Check both hosts’ connections and plugin status.',
+        'models.installLost': 'Installation job not found. Refresh the provider status.',
+        'models.restartRequired': 'The plugin is installed but needs the target to reload. Follow the plugin’s instructions, then sync this provider again.',
+        'models.connectFirst': 'Connect the selected remote host to manage and sync its models.',
+        'models.noChanges': 'No configuration differences to sync.',
+        'models.missing': 'Configure these API keys on the target:',
+        'models.done': 'Model configuration synced.',
+        'models.partial': 'Sync did not finish. Completed writes were kept. Refresh the preview before retrying.',
+        'models.changed': 'Configuration to update',
         'title': 'WSL remote connections',
         'description': 'Each WSL distribution is a remote host (as in Codex): connecting starts your own dsh inside WSL, with the WSL ~/.dsh, models, plugins and native Linux files. Its workspaces and sessions appear right in this window, beside the Windows ones. No restart needed.',
         'loading': 'Detecting WSL…',
@@ -174,7 +322,7 @@ window.__ModuleLoader__.load({
         'ws.next': 'Next',
         'ws.cancel': 'Cancel',
         'ws.notConnected': '{distro} is not connected. It connects when you add the folder; the workspace’s sessions run in your own dsh inside WSL.',
-        'picker.title': 'Choose a folder · WSL: {distro}',
+        'picker.title': 'Choose a folder · {distro}',
         'picker.up': 'Parent folder',
         'picker.home': 'Home',
         'picker.path': 'Folder path',
@@ -194,6 +342,9 @@ window.__ModuleLoader__.load({
         'badge.titleNoOs': 'WSL workspace · {distro} · {state}',
         'open.done': 'Opened from WSL: {path}',
         'plugins.toggle': 'WSL plugins',
+        'plugins.connectFirst': 'Connect to {distro} to view and manage its plugins.',
+        'plugins.refresh': 'Refresh plugins',
+        'plugins.scope': 'Installed in {distro} · profile {profile}',
         'plugins.title': 'Plugins in {distro}',
         'plugins.desc': 'The agent side of WSL sessions (tools, skills, MCP, models) uses these plugins; the interface and this window’s plugin page are always the Windows ones. For a plugin’s sidebar to work in WSL sessions, install it on both sides.',
         'plugins.loading': 'Reading the plugins in WSL…',
@@ -232,10 +383,88 @@ window.__ModuleLoader__.load({
         'plugins.waitingOutput': 'Waiting for pnpm output…',
         'plugins.installed': 'Installed {name}.',
         'plugins.cancelled': 'Install cancelled; the WSL profile was restored.',
+        'ssh.title': 'SSH remote hosts',
+        'ssh.description': 'Used exactly like WSL: connecting starts your own dsh on the server (npm i -g @deepseek-ai/dsh), and its workspaces and sessions appear in this window. Connects with Windows’ OpenSSH, using ~/.ssh/config and your keys; the server opens no extra port.',
+        'ssh.placeholder': 'user@host, host:port or a Host from ~/.ssh/config',
+        'ssh.add': 'Add',
+        'ssh.remove': 'Remove',
+        'ssh.removeConfirm': 'Remove the SSH host {dest}? Its sessions stay on the server.',
+        'ssh.fromConfig': 'From ~/.ssh/config:',
+        'ssh.none': 'No SSH hosts added yet.',
+        'ssh.hint.auth': 'SSH authentication failed. The connection is non-interactive and cannot ask for a password: set up key-based login (ssh-copy-id, or add your public key to ~/.ssh/authorized_keys on the server), and run ssh-add if your key has a passphrase.',
+        'ssh.hint.host-key': 'The host key is not trusted or has changed. Run ssh {dest} in PowerShell once to confirm it, then select Retry.',
+        'ssh.hint.network': 'The server could not be reached. Check the address, port and network.',
+        'req.terminalSsh': 'Run ssh {dest} in a Windows terminal and enter these commands on the server',
+        'ws.ssh': 'SSH',
+        'ws.sshDesc': 'Choose a folder on an SSH remote host',
+        'ws.sshNone': 'Add an SSH host in Settings → General first',
+        'ws.host': 'Host',
+        'ws.notConnectedSsh': '{distro} is not connected. It connects when you add the folder; the workspace’s sessions run in your own dsh on the server.',
+        'badge.titleSsh': 'SSH workspace · {distro} ({os}) · {state}',
+        'badge.titleSshNoOs': 'SSH workspace · {distro} · {state}',
+        'plugins.hostTab': 'Remote',
+        'sync.title': 'Sync plugins',
+        'sync.desc': 'Install the plugins you added on one host on another host, at the same version and from the same source, one by one through the target’s own plugin manager. Plugins only the target has are left alone.',
+        'sync.from': 'From',
+        'sync.to': 'To',
+        'sync.swap': 'Swap',
+        'sync.load': 'Compare',
+        'sync.loading': 'Comparing the two hosts’ plugins…',
+        'sync.selectAll': 'Select all syncable',
+        'sync.oneTitle': 'Sync only {name}',
+        'sync.run': 'Sync selected ({count})',
+        'sync.cancel': 'Stop sync',
+        'sync.close': 'Close',
+        'sync.nothing': 'Nothing to sync: both hosts already match.',
+        'sync.connectFirst': 'Connect both hosts to sync plugins.',
+        'sync.same': 'Choose two different hosts.',
+        'sync.targetOnly': 'Only on the target (left alone):',
+        'sync.state.missing': 'missing on target',
+        'sync.state.differ': 'target has {version}',
+        'sync.state.disabled': 'disabled on target',
+        'sync.state.same': 'in sync',
+        'sync.state.builtin': 'built into target',
+        'sync.state.error': 'fails to load on target: {reason}',
+        'sync.state.unsupported': 'cannot sync automatically',
+        'sync.reason.local-path': 'It is installed from a local folder ({source}) the target cannot reach. Publish it to npm or git, or put it where both hosts can reach it.',
+        'sync.reason.source-missing': 'The source host recorded no install source for it.',
+        'sync.reason.git-unpushed': 'It is installed from a local folder ({source}) the target cannot reach. The folder is a git repository, but its commit is on no remote branch yet; push it and compare again to install it from git.',
+        'sync.reason.git-remote': 'It is installed from a local folder ({source}) the target cannot reach, and its git remote is not a network address the target can use.',
+        'sync.reason.git-subfolder': 'It is installed from a local folder ({source}) the target cannot reach, and the folder is a subfolder of a git repository, which cannot be installed from git directly.',
+        'sync.git.from': 'Installs from git: {remote} @ {commit}.',
+        'sync.git.unpushed': '{count} local commits are not pushed and are not included.',
+        'sync.git.dirty': 'Uncommitted changes are not included.',
+        'sync.action.install': 'Install',
+        'sync.action.update': 'Update to {version}',
+        'sync.action.enable': 'Enable',
+        'sync.item.pending': 'waiting',
+        'sync.item.running': 'running',
+        'sync.item.done': 'done',
+        'sync.item.failed': 'failed',
+        'sync.item.cancelled': 'cancelled',
+        'sync.item.skipped': 'skipped',
+        'sync.done': 'Plugins synced.',
+        'sync.failed': 'Some plugins did not sync; see above.',
+        'sync.restartRemote': 'The dsh on the target needs a restart to load these plugins.',
+        'sync.restartWindows': 'Restart DeepSeek Harness to load these plugins.',
       },
     };
 
     const css = `
+      .lwr-model-page{display:flex;flex-direction:column;gap:20px;min-width:0}
+      .lwr-model-tabs{display:flex;gap:6px;border-bottom:1px solid var(--dsw-alias-border-l3);padding-bottom:10px}
+      .lwr-model-tabs [aria-selected=true]{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary);font-weight:600}
+      .lwr-model-sync{display:flex;flex-direction:column;gap:12px;border:1px solid var(--dsw-alias-border-l3);border-radius:12px;padding:16px}
+      .lwr-model-sync p{margin:0;line-height:1.6}
+      .lwr-provider-sync{display:flex;flex-direction:column;align-items:stretch;gap:12px;margin-top:10px}
+      .lwr-provider-sync:not(:has(.lwr-button,.lwr-model-preview)){display:none}
+      .lwr-provider-action{display:contents}
+      .lwr-model-page [class$="_rowActions"]>.lwr-button{flex:none;white-space:nowrap}
+      .lwr-provider-sync p{margin:0;line-height:1.6}
+      .lwr-provider-sync pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;font-size:12px}
+      .lwr-model-preview{display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--dsw-alias-border-l3);padding-top:14px;overflow-wrap:anywhere}
+      .lwr-model-preview ul{margin:0;padding-left:20px;max-height:220px;overflow:auto;font-size:13px;line-height:1.6}
+      .lwr-model-refresh{margin-bottom:16px}
       .lwr-row{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:16px 0;border-bottom:.5px solid var(--dsw-alias-border-l2)}
       .lwr-block{padding:16px 0;border-bottom:.5px solid var(--dsw-alias-border-l2)}
       .lwr-text{min-width:0;flex:1}
@@ -279,6 +508,15 @@ window.__ModuleLoader__.load({
       .lwr-tag{display:inline-flex;align-items:center;height:18px;margin-left:6px;padding:0 6px;border-radius:9px;font-size:11px;line-height:18px;white-space:nowrap;vertical-align:middle;background:var(--dsw-alias-bg-layer-2, rgba(127,127,127,.12));color:var(--dsw-alias-label-secondary)}
       .lwr-tag[data-where=wsl]{background:rgba(34,197,94,.14);color:#15803d}
       .lwr-tag[data-where=both-differ],.lwr-tag[data-where=windows]{background:rgba(245,158,11,.16);color:#b45309}
+      .lwr-plugin-page{display:flex;flex-direction:column;gap:20px;min-width:0}
+      .lwr-plugin-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+      .lwr-plugin-toolbar .lwr-title{margin:0 0 6px;font-size:15px}
+      .lwr-plugin-toolbar select{min-width:200px;max-width:100%}
+      .lwr-plugin-page>.lwr-plugins{margin:0;border:0;padding:0;gap:12px}
+      .lwr-plugin-page .lwr-plugin{padding:16px;border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.2));border-radius:12px;flex-wrap:wrap;gap:12px}
+      .lwr-plugin-page .lwr-plugin-name{font-size:14px;font-weight:500;white-space:normal;overflow-wrap:anywhere}
+      .lwr-plugin-page .lwr-text{flex:1;min-width:180px}
+      .lwr-plugin-disconnected{padding:24px;border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.2));border-radius:12px}
       .lwr-plugin-install{display:flex;gap:6px;margin-top:4px}
       .lwr-job{display:flex;flex-direction:column;gap:6px;margin-top:6px;padding:8px 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px}
       .lwr-job-head{display:flex;align-items:center;gap:8px}
@@ -306,6 +544,19 @@ window.__ModuleLoader__.load({
     // ---------------------------------------------------------------------
     const UNC = /^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)(\\.*)?$/i;
     const toUnc = (distro, linux) => `\\\\wsl.localhost\\${distro}${linux === '/' ? '\\' : linux.replace(/\//g, '\\')}`;
+    /** Remote host ids: a WSL distribution name, or `ssh:<dest>`. */
+    const isSsh = (id) => typeof id === 'string' && id.startsWith('ssh:');
+    const destOf = (id) => (isSsh(id) ? id.slice(4) : id);
+    /** `WSL: Ubuntu` / `SSH: dev`. */
+    const hostTitle = (id) => (isSsh(id) ? `SSH: ${destOf(id)}` : `WSL: ${id}`);
+    /** What the remote folder picker hands to workspace/create: it names the host; the workspace keeps the Linux path. */
+    const toAddress = (id, linux) => (isSsh(id) ? `ssh://${destOf(id)}${linux}` : toUnc(id, linux));
+    /** Tab label for the remote side: `WSL`, `SSH` or `WSL / SSH`, by which kinds of hosts exist. */
+    const remoteKindsLabel = (hosts) => {
+      const ssh = hosts.some((item) => isSsh(item.name));
+      const wsl = hosts.some((item) => !isSsh(item.name));
+      return ssh && wsl ? 'WSL / SSH' : ssh ? 'SSH' : 'WSL';
+    };
     const isLinuxPath = (path) => typeof path === 'string' && path.startsWith('/') && !path.startsWith('//');
     /** Which distribution owns a WSL workspace: from the Host's merge, or a legacy `\\wsl.localhost` path. */
     const wslInfo = (item, hosts) => {
@@ -362,6 +613,280 @@ window.__ModuleLoader__.load({
       .lwr-target{font-size:12px;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
       .lwr-target code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--dsw-alias-label-primary)}
     `;
+
+    /** Keep the native Models editor and its child-slot bindings, adding a host selector. */
+    function applyModels(ctx, { useT, useStatus, store }) {
+      const post = (path, data) => call(`api/local-wsl-remote/models/${path}`, { method: 'POST', body: JSON.stringify(data) });
+      const rpc = (distro, endpoint, args = {}) => post('rpc', { distro, endpoint, args })
+        .catch((error) => ({ ok: false, error: { code: 'wsl/unavailable', message: error.message } }));
+
+      // The native provider slot is below the header; keep React ownership while
+      // placing its action beside the native Edit and Delete controls.
+      function ProviderAction({ children }) {
+        const anchor = React.useRef(null);
+        const [actions, setActions] = React.useState(null);
+        React.useLayoutEffect(() => {
+          setActions(anchor.current?.closest('li')?.querySelector('[class$="_rowActions"]') ?? null);
+        }, []);
+        return h('span', { ref: anchor, className: 'lwr-provider-action' },
+          actions ? createPortal(children, actions) : children);
+      }
+
+      function RemoteModels({ native: Native, nativeProps, distro, refresh, wrapSlot }) {
+        const adapter = React.useMemo(() => {
+          const invoke = (endpoint, args) => rpc(distro, endpoint, args);
+          let snapshot = { view: undefined, error: null };
+          const describe = {
+            ensure: async () => {
+              const result = await invoke('settings/describe', {});
+              snapshot = result.ok ? { view: result.value, error: null } : { view: undefined, error: result.error.message };
+            },
+            getSnapshot: () => snapshot,
+          };
+          const remote = {
+            llm: {
+              listProviders: () => invoke('llm/listProviders', {}),
+              listConfigurableProviders: () => invoke('llm/listConfigurableProviders', {}),
+            },
+            session: { modelCatalog: () => invoke('session/modelCatalog', {}) },
+            credentials: { describe: (refs) => invoke('credentials/describe', { refs }) },
+          };
+          const controller = new nativeProps.controller.constructor({ remote }, nativeProps.schema, describe);
+          const operations = {
+            storeCredential: async (ref, value) => {
+              const result = await invoke('credentials/set', { ref, value });
+              return result.ok ? undefined : result.error.message;
+            },
+            removeCredential: async (ref) => {
+              const result = await invoke('credentials/unset', { ref });
+              return result.ok ? undefined : result.error.message;
+            },
+            writeSettings: async (ns, ops, expectedRevision) => {
+              const result = await invoke('settings/mutate', { ns, ops, expectedRevision });
+              return result.ok ? { kind: 'written', view: result.value }
+                : { kind: result.error.code === 'settings/conflict' ? 'conflict' : 'refused', message: result.error.message };
+            },
+            discoverModels: async (settingsNs, request) => {
+              const result = await invoke('llm/discoverModels', { settingsNs, request });
+              return result.ok ? { kind: 'found', models: result.value } : { kind: 'refused', message: result.error.message };
+            },
+          };
+          return { controller, operations };
+        }, [distro, nativeProps.controller, nativeProps.schema]);
+        const useSnapshot = React.useCallback((select) => select(React.useSyncExternalStore(
+          adapter.controller.store.subscribe, adapter.controller.store.getSnapshot, adapter.controller.store.getSnapshot)), [adapter]);
+        React.useEffect(() => {
+          const reload = () => Promise.resolve(adapter.controller.load()).catch((error) => {
+            adapter.controller.failLoad?.(error.message ?? String(error));
+          });
+          reload();
+          window.addEventListener('focus', reload);
+          return () => window.removeEventListener('focus', reload);
+        }, [adapter, refresh]);
+        // Provider-specific Windows login widgets close over Windows services.
+        // On WSL use the native generic editor fallback, whose operations are host-bound.
+        return h(Native, { ...nativeProps, ...adapter, useSnapshot,
+          renderSlot: wrapSlot((_key, _props, options) => options?.fallback ?? null) });
+      }
+
+      function HostModels({ native: Native, nativeProps }) {
+        const tr = useT();
+        const status = useStatus();
+        const [tab, setTab] = React.useState('windows');
+        const [selected, setSelected] = React.useState('');
+        const direction = tab === 'windows' ? 'windows-to-wsl' : 'wsl-to-windows';
+        const [selection, setSelection] = React.useState(null);
+        const [savedPlugin, setPlugin] = React.useState(null);
+        const [job, setJob] = React.useState(null);
+        const [savedPreview, setPreview] = React.useState(null);
+        const [working, setBusy] = React.useState(false);
+        const busy = working || job?.status === 'running';
+        const [failure, setFailure] = React.useState('');
+        const [notice, setNotice] = React.useState('');
+        const [refresh, setRefresh] = React.useState(0);
+        const hosts = status.value?.distros ?? [];
+        const host = hosts.find((item) => item.name === selected) ?? hosts.find((item) => item.state === 'connected') ?? hosts[0];
+        const hostName = host?.name;
+        const remoteTabLabel = remoteKindsLabel(hosts);
+        const preview = savedPreview?.host === hostName && savedPreview?.direction === direction ? savedPreview : null;
+        const plugin = savedPlugin?.host === hostName && savedPlugin?.direction === direction ? savedPlugin : null;
+        React.useEffect(() => { setSelection(null); setPlugin(null); setPreview(null); setJob(null); setFailure(''); setNotice(''); }, [hostName, direction]);
+        const run = async (action) => {
+          setBusy(true); setFailure(''); setNotice('');
+          try { await action(); } catch (error) { setFailure(error.message); }
+          finally { setBusy(false); }
+        };
+        const reload = () => {
+          Promise.resolve(nativeProps.controller.load()).catch((error) => setFailure(error.message ?? String(error)));
+          setRefresh((value) => value + 1);
+        };
+        const connect = () => run(async () => {
+          store.accept(await call('api/local-wsl-remote/connect', { method: 'POST', body: JSON.stringify({ distro: hostName }) }));
+        });
+        const selector = (entry) => ({ distro: hostName, direction, provider: entry.provider, settingsNs: entry.settingsNs });
+        const pluginReason = (reason) => tr(`models.${({
+          'source-owner-unavailable': 'ownerMissing',
+          'source-owner-ambiguous': 'ownerAmbiguous', 'target-owner-ambiguous': 'ownerAmbiguous',
+          'source-provider-unavailable': 'providerUnavailable', 'target-provider-unavailable': 'providerUnavailable',
+          'source-provider-ambiguous': 'ownerAmbiguous', 'target-provider-ambiguous': 'ownerAmbiguous',
+          'target-incompatible': 'incompatible', 'unsupported-source-platform': 'localPath',
+          'source-install-spec-missing': 'sourceMissing',
+        })[reason] ?? 'pluginUnavailable'}`);
+        const prepare = async (entry) => {
+          setSelection(entry); setPreview(null); setPlugin(null);
+          const plan = await post('provider-plugin', selector(entry));
+          setPlugin({ ...plan, host: hostName, direction });
+          if (plan.status !== 'available') return;
+          const result = await post('preview', selector(entry));
+          setPreview({ ...result, host: hostName, direction });
+        };
+        const showPreview = (entry) => run(async () => { setJob(null); await prepare(entry); });
+        const installProvider = () => run(async () => {
+          const result = await post('install-provider', { ...selector(selection), expected: { status: plugin.status, name: plugin.name, spec: plugin.spec } });
+          if (result.job) setJob(result.job);
+          else {
+            reload();
+            if (result.result?.application === 'restart-required') setNotice(tr('models.restartRequired'));
+            else await prepare(selection);
+          }
+        });
+        const installCall = (path, data) => call(`api/local-wsl-remote/plugins/${path}`, { method: 'POST', body: JSON.stringify(data) });
+        React.useEffect(() => {
+          if (job?.status !== 'running') return;
+          let disposed = false, polling = false;
+          const poll = async () => {
+            if (polling) return;
+            polling = true;
+            try {
+              const result = await installCall('install-status', { id: job.id });
+              if (disposed) return;
+              if (!result.job) throw new Error(tr('models.installLost'));
+              setJob(result.job);
+              if (result.job.status === 'done') {
+                await run(async () => {
+                  reload();
+                  if (result.job.result?.application === 'restart-required') setNotice(tr('models.restartRequired'));
+                  else await prepare(selection);
+                });
+              } else if (['failed', 'cancelled'].includes(result.job.status)) {
+                setFailure(result.job.error || result.job.result?.message || tr('models.installFailed'));
+              }
+            } catch (error) { if (!disposed) setFailure(error.message); }
+            finally { polling = false; }
+          };
+          const timer = setInterval(poll, 1500);
+          poll();
+          return () => { disposed = true; clearInterval(timer); };
+        }, [job?.id, job?.status]);
+        const cancelInstall = () => run(async () => { setJob((await installCall('install-cancel', { id: job.id })).job); });
+        const copyKeys = preview?.credentials?.length > 0 && preview.copyKeys !== false;
+        const apply = () => run(async () => {
+          const token = preview.token;
+          const credentials = copyKeys;
+          setPreview(null);
+          const result = await post('apply', { token, credentials });
+          reload();
+          if (result.error) {
+            const detail = [
+              ...(result.failed ?? []).map((item) => `${item.ns}: ${item.error}`),
+              ...(result.credentialsFailed ?? []).map((item) => `${item.ref}: ${item.error}`),
+            ].join('; ') || result.error;
+            setFailure(`${tr('models.partial')} ${detail}`);
+          }
+          else setNotice(result.credentialsApplied?.length > 0 ? tr('models.doneKeys', { refs: result.credentialsApplied.join(', ') }) : tr('models.done'));
+        });
+        const renderPreview = () => preview && h('div', { className: 'lwr-model-preview' },
+          h('strong', null, `${preview.source} → ${preview.target}`),
+          preview.changes.length ? h('div', null, h('p', null, tr('models.changed')),
+            h('ul', null, preview.changes.map((change, index) => h('li', { key: index },
+              h('details', null,
+                h('summary', null, `${change.ns}${change.path?.length ? ': ' + change.path.join(' / ') : ''}`),
+                h('pre', null, `− ${JSON.stringify(change.before ?? null, null, 2)}\n+ ${JSON.stringify(change.after ?? null, null, 2)}`))))))
+            : h('p', null, tr(preview.credentials?.length ? 'models.noConfigChanges' : 'models.noChanges')),
+          preview.warnings?.length > 0 && h('ul', { className: 'lwr-note' }, preview.warnings.map((warning, index) => h('li', { key: index }, warning))),
+          preview.missingCredentials?.length > 0 && h('p', { className: 'lwr-note' }, `${tr('models.missing')} ${preview.missingCredentials.join(', ')}`),
+          preview.credentials?.length > 0 && h('label', { className: 'lwr-check', 'data-lwr-copy-keys': '' },
+            h('input', { type: 'checkbox', checked: copyKeys, disabled: busy, onChange: (event) => setPreview({ ...preview, copyKeys: event.target.checked }) }),
+            `${tr('models.copyKeys')} ${preview.credentials.map((item) => `${item.ref}${item.action === 'update' ? ` (${tr('models.keyUpdate')})` : ''}`).join(', ')}`),
+          h('div', { className: 'lwr-actions' },
+            h('button', { type: 'button', className: 'lwr-button', disabled: busy || (!preview.changes.length && !copyKeys), onClick: apply }, tr('models.apply')),
+            h('button', { type: 'button', className: 'lwr-button', disabled: busy, onClick: () => { setSelection(null); setPreview(null); setPlugin(null); } }, tr('models.cancel'))));
+        const wrapSlot = (render) => (key, props, options) => {
+          const content = render?.(key, props, options) ?? options?.fallback ?? null;
+          const entry = props?.provider;
+          if (key !== 'settings.models.provider-card' || !props.configured || !entry?.settingsNs) return content;
+          const active = selection?.provider === entry.provider && selection?.settingsNs === entry.settingsNs;
+          return h('div', null, content,
+            h('div', { className: 'lwr-provider-sync', 'data-provider-sync': entry.provider },
+              h(ProviderAction, null,
+                h('button', { type: 'button', className: 'lwr-button', disabled: busy || host?.state !== 'connected',
+                  onClick: () => showPreview(entry) }, tr(tab === 'windows' ? 'models.syncToWsl' : 'models.syncToWindows', { kind: isSsh(hostName) ? 'SSH' : 'WSL' }))),
+              active && plugin && plugin.status !== 'available' && h('div', { className: 'lwr-model-preview' },
+                h('strong', null, plugin.name || entry.displayName || entry.provider),
+                h('p', { className: 'lwr-note' }, plugin.reason ? pluginReason(plugin.reason) : tr(plugin.status === 'enable' ? 'models.enableHint' : 'models.installHint')),
+                plugin.spec && h('code', null, plugin.spec),
+                ['install', 'enable'].includes(plugin.status) && h('button', { type: 'button', className: 'lwr-button', disabled: busy,
+                  onClick: installProvider }, tr(plugin.status === 'enable' ? 'models.enableProvider' : 'models.installProvider'))),
+              active && job && h('div', { className: 'lwr-model-preview', role: 'status' },
+                h('p', null, `${tr('models.installStatus')} ${job.phase || job.status}`),
+                job.lines?.length > 0 && h('details', null, h('summary', null, tr('models.installLog')), h('pre', null, job.lines.join('\n'))),
+                job.status === 'running' && h('button', { type: 'button', className: 'lwr-button', disabled: working || Boolean(job.cancelRequested), onClick: cancelInstall }, tr('models.cancelInstall'))),
+              active && renderPreview()));
+        };
+        const id = React.useId();
+        return h('div', { className: 'lwr-model-page', 'data-wsl-model-page': '' },
+          h('style', null, css),
+          h('div', { className: 'lwr-model-tabs', role: 'tablist', 'aria-label': tr('models.host') },
+            ['windows', 'wsl'].map((name) => h('button', { key: name, type: 'button', role: 'tab', id: `${id}-${name}`,
+              'aria-controls': `${id}-panel`, 'aria-selected': tab === name, tabIndex: tab === name ? 0 : -1,
+              className: 'lwr-button', disabled: busy, onClick: () => setTab(name),
+              onKeyDown: (event) => {
+                if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+                  event.preventDefault(); const next = event.key === 'Home' ? 'windows' : event.key === 'End' ? 'wsl' : tab === 'windows' ? 'wsl' : 'windows';
+                  setTab(next); document.getElementById(`${id}-${next}`)?.focus();
+                }
+              } }, name === 'windows' ? 'Windows' : remoteTabLabel))),
+          h('div', { className: 'lwr-model-sync' },
+            h('div', { className: 'lwr-plugin-toolbar' },
+              h('label', { className: 'lwr-check' }, tr('ws.host'),
+                h('select', { className: 'lwr-input', value: hostName ?? '', disabled: busy || hosts.length === 0,
+                  onChange: (event) => setSelected(event.target.value) },
+                  hosts.map((item) => h('option', { key: item.name, value: item.name }, hostTitle(item.name))))),
+              host && h('span', { className: 'lwr-note' }, tr(`state.${host.state}`)),
+              host && host.state !== 'connected' && h('button', { type: 'button', className: 'lwr-button', disabled: busy || host.state === 'connecting', onClick: connect }, tr(host.state === 'connecting' ? 'state.connecting' : 'connect'))),
+            h('p', { className: 'lwr-note' }, tr('models.hint')),
+            failure && h('p', { role: 'alert', className: 'lwr-alert' }, failure),
+            notice && h('p', { role: 'status', className: 'lwr-note' }, notice),
+            status.status === 'error' && h('p', { role: 'alert', className: 'lwr-alert' }, status.message)),
+          h('div', { role: 'tabpanel', id: `${id}-panel`, 'aria-labelledby': `${id}-${tab}` },
+            h('button', { type: 'button', className: 'lwr-button lwr-model-refresh', onClick: reload, disabled: busy }, tr('models.refresh')),
+            tab === 'windows' ? h(Native, { ...nativeProps, renderSlot: wrapSlot(nativeProps.renderSlot) })
+              : host?.state === 'connected' ? h(RemoteModels, { key: hostName, native: Native, nativeProps, distro: hostName, refresh, wrapSlot })
+                : h('p', { className: 'lwr-note' }, tr(host ? 'models.connectFirst' : 'none'))));
+      }
+
+      // Models currently declares provider/footer children but no tab extension.
+      // Wrap its component in place so the renderer retains the original entry's
+      // child-slot authorization and injected editor store. Restore only our wrapper.
+      ctx.slots.inject('settings.section', () => {
+        const patched = new Map();
+        const attach = () => {
+          for (const entry of ctx.slots.entries('settings.section')) {
+            if (entry.options.id !== 'models' || patched.has(entry)) continue;
+            const Native = entry.component;
+            const wrapper = (props) => h(HostModels, { native: Native, nativeProps: props });
+            patched.set(entry, { Native, wrapper });
+            entry.component = wrapper;
+          }
+        };
+        attach();
+        const unsubscribe = ctx.slots.subscribe('settings.section', attach);
+        return () => {
+          unsubscribe();
+          for (const [entry, { Native, wrapper }] of patched) if (entry.component === wrapper) entry.component = Native;
+        };
+      });
+    }
 
     /**
      * Workspace integration. Services are optional: a host without the
@@ -581,14 +1106,17 @@ window.__ModuleLoader__.load({
 
       function Chooser({ onLocal, onWsl, onCancel }) {
         const tr = useT();
-        const { distros: list, loaded } = useDistros();
+        const { distros: all, loaded } = useDistros();
         const [kind, setKind] = React.useState('local');
         const [distro, setDistro] = React.useState(undefined);
+        // WSL and SSH hosts are picked the same way; each card lists its own kind.
+        const list = all.filter((entry) => (kind === 'ssh') === isSsh(entry.name));
         React.useEffect(() => {
-          if (distro === undefined && list.length > 0) setDistro((list.find((entry) => entry.isDefault) ?? list[0]).name);
-        }, [list, distro]);
+          if ((distro === undefined || !list.some((entry) => entry.name === distro)) && list.length > 0) setDistro((list.find((entry) => entry.isDefault) ?? list[0]).name);
+        }, [list.map((entry) => entry.name).join('|'), distro]);
         const selected = list.find((entry) => entry.name === distro);
-        const wslAvailable = list.length > 0;
+        const wslAvailable = all.some((entry) => !isSsh(entry.name));
+        const sshAvailable = all.some((entry) => isSsh(entry.name));
         const card = (id, title, desc, disabled) => h('button', {
           type: 'button',
           role: 'radio',
@@ -601,6 +1129,7 @@ window.__ModuleLoader__.load({
         h('span', { className: 'lwr-card-title' }, title),
         h('span', { className: 'lwr-card-desc' }, desc));
         const next = () => (kind === 'local' ? onLocal() : selected && onWsl(selected.name));
+        const remote = kind !== 'local';
         return h(Modal, {
           open: true,
           onClose: onCancel,
@@ -608,17 +1137,18 @@ window.__ModuleLoader__.load({
           closeLabel: tr('ws.cancel'),
           footer: h(React.Fragment, null,
             h(Button, { variant: 'outline', onClick: onCancel }, tr('ws.cancel')),
-            h(Button, { variant: 'primary', disabled: kind === 'wsl' && selected === undefined, onClick: next }, tr('ws.next'))),
+            h(Button, { variant: 'primary', disabled: remote && selected === undefined, onClick: next }, tr('ws.next'))),
         },
         h('div', { className: 'lwr-field', style: { marginTop: 0 } }, h('label', null, tr('ws.type'))),
-        h('div', { className: 'lwr-choice', role: 'radiogroup', 'aria-label': tr('ws.type'), style: { marginTop: 6 } },
+        h('div', { className: 'lwr-choice', role: 'radiogroup', 'aria-label': tr('ws.type'), style: { marginTop: 6, gridTemplateColumns: '1fr 1fr 1fr' } },
           card('local', tr('ws.local'), tr('ws.localDesc'), false),
-          card('wsl', tr('ws.wsl'), loaded && !wslAvailable ? tr('ws.wslNone') : tr('ws.wslDesc'), loaded && !wslAvailable)),
-        kind === 'wsl' && wslAvailable && h('div', { className: 'lwr-field' },
-          h('label', { htmlFor: 'lwr-distro' }, tr('ws.distro')),
+          card('wsl', tr('ws.wsl'), loaded && !wslAvailable ? tr('ws.wslNone') : tr('ws.wslDesc'), loaded && !wslAvailable),
+          card('ssh', tr('ws.ssh'), loaded && !sshAvailable ? tr('ws.sshNone') : tr('ws.sshDesc'), loaded && !sshAvailable)),
+        remote && list.length > 0 && h('div', { className: 'lwr-field' },
+          h('label', { htmlFor: 'lwr-distro' }, tr(kind === 'ssh' ? 'ws.host' : 'ws.distro')),
           h('select', { id: 'lwr-distro', className: 'lwr-select', value: distro ?? '', onChange: (event) => setDistro(event.target.value) },
-            list.map((entry) => h('option', { key: entry.name, value: entry.name }, `WSL: ${entry.name}${entry.os ? ` · ${osLabelOf(entry.os)}` : ''}`))),
-          selected && selected.state !== 'connected' && h('div', { className: 'lwr-note' }, tr('ws.notConnected', { distro: selected.name }))));
+            list.map((entry) => h('option', { key: entry.name, value: entry.name }, `${hostTitle(entry.name)}${entry.os ? ` · ${osLabelOf(entry.os)}` : ''}`))),
+          selected && selected.state !== 'connected' && h('div', { className: 'lwr-note' }, tr(isSsh(selected.name) ? 'ws.notConnectedSsh' : 'ws.notConnected', { distro: destOf(selected.name) }))));
       }
 
       /** In-app Linux folder browser for one distribution (paths are Linux paths). */
@@ -677,7 +1207,7 @@ window.__ModuleLoader__.load({
           onClose: () => {
             if (!busy) onCancel();
           },
-          title: tr('picker.title', { distro }),
+          title: tr('picker.title', { distro: hostTitle(distro) }),
           closeLabel: tr('ws.cancel'),
           footer: h('div', { className: 'lwr-picker-foot', style: { width: '100%' } },
             h(Button, { variant: 'outline', disabled: busy, onClick: onBack }, tr('picker.back')),
@@ -746,7 +1276,7 @@ window.__ModuleLoader__.load({
             h('label', { className: 'lwr-check' },
               h('input', { type: 'checkbox', checked: showHidden, onChange: (event) => setShowHidden(event.target.checked) }),
               tr('picker.showHidden'))),
-          listing && h('div', { className: 'lwr-target' }, tr('picker.target', { path: '' }), h('code', null, `${distro}:${listing.path}`))));
+          listing && h('div', { className: 'lwr-target' }, tr('picker.target', { path: '' }), h('code', null, `${destOf(distro)}:${listing.path}`))));
       }
 
       /**
@@ -791,7 +1321,7 @@ window.__ModuleLoader__.load({
         return h(LinuxPicker, {
           distro,
           busy,
-          onOpen: (linux) => onPicked(toUnc(distro, linux)),
+          onOpen: (linux) => onPicked(toAddress(distro, linux)),
           onBack: () => setStage('choose'),
           onCancel,
         });
@@ -861,7 +1391,9 @@ window.__ModuleLoader__.load({
             const entry = distroState.distros.find((item) => item.name.toLowerCase() === info.distro.toLowerCase());
             const os = osLabelOf(entry?.os);
             const state = entry?.state ?? 'disconnected';
-            const title = os ? t('badge.title', { distro: info.distro, os, state: stateText(state) }) : t('badge.titleNoOs', { distro: info.distro, state: stateText(state) });
+            const ssh = isSsh(info.distro);
+            const shown = destOf(info.distro);
+            const title = os ? t(ssh ? 'badge.titleSsh' : 'badge.title', { distro: shown, os, state: stateText(state) }) : t(ssh ? 'badge.titleSshNoOs' : 'badge.titleNoOs', { distro: shown, state: stateText(state) });
             const key = `${info.distro}|${os}|${state}|${title}`;
             if (tag !== null && tag.dataset.key === key) continue;
             if (tag === null) {
@@ -877,8 +1409,9 @@ window.__ModuleLoader__.load({
             dot.className = 'lwr-wsl-dot';
             dot.dataset.state = state;
             const label = document.createElement('b');
-            label.textContent = 'WSL';
-            tag.append(dot, label, document.createTextNode(os ? ` · ${os}` : ` · ${info.distro}`));
+            label.textContent = ssh ? 'SSH' : 'WSL';
+            // An SSH badge names the server: several hosts often run the same OS.
+            tag.append(dot, label, document.createTextNode(ssh ? ` · ${shown}` : os ? ` · ${os}` : ` · ${shown}`));
           }
         };
         // Rows mount, scroll into view (virtualised) and re-render; repaint on any change outside our own badges.
@@ -942,6 +1475,32 @@ window.__ModuleLoader__.load({
     return {
       inject: ['slots', 'locale'],
       apply(ctx) {
+        // Streams opened before the Host merge was installed (including while
+        // the plugin was disabled) must reopen through the current bridge.
+        ctx.inject(['connection'], (scope) => {
+          const abort = new AbortController();
+          let timer;
+          const refreshBridge = async () => {
+            try {
+              const status = await call('api/local-wsl-remote/connections', { signal: abort.signal });
+              if (abort.signal.aborted) return;
+              if (status.bridgeReady) {
+                scope.connection.reconnect();
+                return;
+              }
+            } catch {
+              if (abort.signal.aborted) return;
+            }
+            timer = setTimeout(refreshBridge, 1000);
+          };
+          scope.effect(() => {
+            refreshBridge();
+            return () => {
+              abort.abort();
+              clearTimeout(timer);
+            };
+          }, 'wsl-remote: reopen subscriptions after activation');
+        });
         for (const [language, dictionary] of Object.entries(dictionaries)) ctx.effect(() => ctx.locale.register(NS, language, dictionary));
         const raw = ctx.locale.bind(NS);
         const t = (key, values) => format(raw(key), values);
@@ -1009,15 +1568,17 @@ window.__ModuleLoader__.load({
             h('button', { type: 'button', className: 'lwr-button lwr-copy', onClick: copy }, tr(copied ? 'copied' : 'copy')));
         }
 
-        /** Install guidance: why something cannot start in WSL, and the commands that fix it. */
+        /** Install guidance: why something cannot start on a remote host, and the commands that fix it. */
         function Requirement({ host, requirement = host.requirement }) {
           const tr = useT();
+          const ssh = isSsh(host.name);
           return h('div', { className: 'lwr-req', role: 'alert' },
-            h('div', { className: 'lwr-alert' }, tr(`req.${requirement.reason}`, { distro: host.name, found: requirement.found ?? '', minimum: requirement.minimum })),
+            h('div', { className: 'lwr-alert' }, tr(`req.${requirement.reason}`, { distro: destOf(host.name), found: requirement.found ?? '', minimum: requirement.minimum })),
             requirement.steps.map((step, index) => h('div', { key: index, className: 'lwr-step' },
               h('div', { className: 'lwr-step-note' }, `${index + 1}. ${tr(`req.note.${step.note}`, { minimum: requirement.minimum })}`),
               h(Command, { command: step.command }))),
-            h('div', { className: 'lwr-note' }, tr('req.terminal', { distro: host.name })));
+            ssh ? h('div', { className: 'lwr-note' }, tr('req.terminalSsh', { dest: destOf(host.name) }))
+              : h('div', { className: 'lwr-note' }, tr('req.terminal', { distro: host.name })));
         }
 
 
@@ -1160,8 +1721,11 @@ window.__ModuleLoader__.load({
           const value = state.status === 'ready' ? state.value : undefined;
           const tag = (where, version) => h('span', { className: 'lwr-tag', 'data-where': where }, tr(`plugins.where.${where}`, { version: version ?? '?' }));
           return h('div', { className: 'lwr-plugins' },
-            h('div', { className: 'lwr-title' }, tr('plugins.title', { distro: host.name })),
-            h('div', { className: 'lwr-note' }, tr('plugins.desc')),
+            h('div', { className: 'lwr-plugin-toolbar' },
+              h('div', null,
+                h('h2', { className: 'lwr-title' }, tr('plugins.title', { distro: hostTitle(host.name) })),
+                h('div', { className: 'lwr-note' }, tr('plugins.scope', { distro: hostTitle(host.name), profile: host.profile ?? 'web' }))),
+              h('button', { type: 'button', className: 'lwr-button', disabled: busy !== undefined || installing, onClick: load }, tr('plugins.refresh'))),
             state.status === 'loading' && h('div', { className: 'lwr-note' }, tr('plugins.loading')),
             state.status === 'error' && h('div', { className: 'lwr-alert', role: 'alert' }, state.message),
             value && value.plugins.length === 0 && h('div', { className: 'lwr-note' }, tr('plugins.empty')),
@@ -1179,23 +1743,9 @@ window.__ModuleLoader__.load({
                   className: 'lwr-button',
                   disabled: busy !== undefined,
                   onClick: () => {
-                    if (window.confirm(tr('plugins.removeConfirm', { name: plugin.name, distro: host.name }))) change(`remove:${plugin.name}`, { action: 'remove', name: plugin.name });
+                    if (window.confirm(tr('plugins.removeConfirm', { name: plugin.name, distro: hostTitle(host.name) }))) change(`remove:${plugin.name}`, { action: 'remove', name: plugin.name });
                   },
                 }, tr('plugins.remove'))))),
-            value && value.windowsOnly.length > 0 && h('div', { className: 'lwr-note' }, tr('plugins.windowsOnly')),
-            value && value.windowsOnly.map((plugin) => h('div', { key: `win:${plugin.name}`, className: 'lwr-plugin' },
-              h('div', { className: 'lwr-text' },
-                h('span', { className: 'lwr-plugin-name', title: plugin.name }, pluginTitle(plugin)),
-                plugin.version && h('span', { className: 'lwr-plugin-version' }, plugin.version),
-                tag('windows')),
-              h('div', { className: 'lwr-actions' },
-                h('button', {
-                  type: 'button',
-                  className: 'lwr-button',
-                  disabled: busy !== undefined || installing,
-                  title: plugin.installSpec,
-                  onClick: () => install(plugin.installSpec),
-                }, tr('plugins.installHere'))))),
             value && h('div', { className: 'lwr-plugin-install' },
               h('input', {
                 className: 'lwr-input',
@@ -1224,7 +1774,6 @@ window.__ModuleLoader__.load({
           const tr = useT();
           const [busy, setBusy] = React.useState(false);
           const [failure, setFailure] = React.useState(undefined);
-          const [showPlugins, setShowPlugins] = React.useState(false);
           const run = async (action) => {
             setBusy(true);
             setFailure(undefined);
@@ -1239,6 +1788,10 @@ window.__ModuleLoader__.load({
           const post = (path) => run(async () => onResult(await call(`api/local-wsl-remote/${path}`, { method: 'POST', body: JSON.stringify({ distro: host.name }) })));
           const connected = host.state === 'connected';
           const connecting = host.state === 'connecting';
+          const ssh = isSsh(host.name);
+          const remove = () => {
+            if (window.confirm(tr('ssh.removeConfirm', { dest: destOf(host.name) }))) post('ssh/remove');
+          };
           const details = [];
           if (host.dsh) details.push(tr('version', { version: host.dsh }));
           if (connected && host.shareLogin !== undefined) details.push(tr(host.shareLogin ? 'shared' : 'separate'));
@@ -1246,28 +1799,76 @@ window.__ModuleLoader__.load({
           return h('div', { className: 'lwr-host-wrap' }, h('div', { className: 'lwr-host' },
             h('span', { className: 'lwr-dot', 'data-state': host.state, 'aria-hidden': true }),
             h('div', { className: 'lwr-text' },
-              h('div', { className: 'lwr-name' }, `WSL: ${host.name}`,
+              h('div', { className: 'lwr-name' }, hostTitle(host.name),
                 host.os && h('span', { className: 'lwr-os', title: host.os.pretty || undefined }, osLabel(host.os)),
                 host.isDefault && h('span', { className: 'lwr-badge' }, tr('default'))),
               h('div', { className: 'lwr-note' }, [tr(`state.${host.state}`), ...details].join(' · ')),
               host.requirement && h(Requirement, { host }),
               host.state === 'error' && host.error && !host.requirement && h('div', { className: 'lwr-alert', role: 'alert' }, host.error),
+              host.state === 'error' && host.hint && h('div', { className: 'lwr-note' }, tr(`ssh.hint.${host.hint}`, { dest: destOf(host.name) })),
               host.launcher && h(Launcher, { launcher: host.launcher }),
               failure && h('div', { className: 'lwr-alert', role: 'alert' }, failure)),
             h('div', { className: 'lwr-actions' },
-              connected && h('button', { type: 'button', className: 'lwr-button', 'aria-expanded': showPlugins, disabled: busy, onClick: () => setShowPlugins((open) => !open) }, tr('plugins.toggle')),
               connected && h('button', { type: 'button', className: 'lwr-button', 'data-primary': '', disabled: busy, onClick: () => run(() => openUrl(host.name, false)) }, tr('open')),
               connected && h('button', { type: 'button', className: 'lwr-button', disabled: busy, onClick: () => run(() => openUrl(host.name, true)) }, tr('openExternal')),
               (connected || connecting) && h('button', { type: 'button', className: 'lwr-button', disabled: busy, onClick: () => post('disconnect') }, tr('disconnect')),
-              !connected && !connecting && h('button', { type: 'button', className: 'lwr-button', 'data-primary': '', disabled: busy, onClick: () => post('connect') }, tr(host.state === 'error' ? 'retry' : 'connect')))),
-            connected && showPlugins && h(Plugins, { host }));
+              !connected && !connecting && h('button', { type: 'button', className: 'lwr-button', 'data-primary': '', disabled: busy, onClick: () => post('connect') }, tr(host.state === 'error' ? 'retry' : 'connect')),
+              ssh && !connecting && h('button', { type: 'button', className: 'lwr-button', disabled: busy, onClick: remove }, tr('ssh.remove')))));
+        }
+
+        /** SSH hosts: added by destination, then listed with the WSL distributions and used the same way. */
+        function SshHosts({ value }) {
+          const tr = useT();
+          const [draft, setDraft] = React.useState('');
+          const [busy, setBusy] = React.useState(false);
+          const [failure, setFailure] = React.useState(undefined);
+          const add = async (dest) => {
+            const target = (dest ?? draft).trim();
+            if (!target) return;
+            setBusy(true);
+            setFailure(undefined);
+            try {
+              store.accept(await call('api/local-wsl-remote/ssh/add', { method: 'POST', body: JSON.stringify({ dest: target }) }));
+              setDraft('');
+            } catch (error) {
+              setFailure(error.message);
+            } finally {
+              setBusy(false);
+            }
+          };
+          const hosts = value.distros.filter((host) => isSsh(host.name));
+          const suggestions = value.sshConfigHosts ?? [];
+          return h('div', { className: 'lwr-block', 'data-lwr-ssh': '' },
+            h('div', { className: 'lwr-title' }, tr('ssh.title')),
+            h('div', { className: 'lwr-desc' }, tr('ssh.description')),
+            hosts.length === 0 && h('div', { className: 'lwr-note' }, tr('ssh.none')),
+            hosts.length > 0 && h('div', { className: 'lwr-list' }, hosts.map((host) => h(Host, { key: host.name, host, onResult: store.accept }))),
+            h('div', { className: 'lwr-plugin-install', style: { marginTop: 12 } },
+              h('input', {
+                className: 'lwr-input',
+                value: draft,
+                spellCheck: false,
+                placeholder: tr('ssh.placeholder'),
+                'aria-label': tr('ssh.placeholder'),
+                disabled: busy,
+                onChange: (event) => setDraft(event.target.value),
+                onKeyDown: (event) => {
+                  if (event.key === 'Enter' && !event.nativeEvent?.isComposing) add();
+                },
+              }),
+              h('button', { type: 'button', className: 'lwr-button', 'data-primary': '', disabled: busy || !draft.trim(), onClick: () => add() }, tr('ssh.add'))),
+            suggestions.length > 0 && h('div', { className: 'lwr-note', style: { display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' } },
+              tr('ssh.fromConfig'),
+              suggestions.map((dest) => h('button', { key: dest, type: 'button', className: 'lwr-button lwr-copy', disabled: busy, onClick: () => add(dest) }, `+ ${dest}`))),
+            failure && h('div', { className: 'lwr-alert', role: 'alert' }, failure));
         }
 
         function ConnectionsRow() {
           const tr = useT();
           const status = useStatus();
           const value = status.status === 'ready' ? status.value : undefined;
-          return h('div', { className: 'lwr-block' },
+          const wsl = value ? value.distros.filter((host) => !isSsh(host.name)) : [];
+          return h(React.Fragment, null, h('div', { className: 'lwr-block' },
             h('style', null, css),
             h('div', { className: 'lwr-title' }, tr('title')),
             h('div', { className: 'lwr-desc' }, tr('description')),
@@ -1275,11 +1876,12 @@ window.__ModuleLoader__.load({
             status.status === 'loading' && h('div', { className: 'lwr-note' }, tr('loading')),
             status.status === 'error' && h('div', { className: 'lwr-alert', role: 'alert' }, status.message),
             value && value.platform !== 'win32' && h('div', { className: 'lwr-note' }, tr('notWindows')),
-            value && value.platform === 'win32' && value.distros.length === 0 && !value.discoveryError && h('div', { className: 'lwr-note' }, tr('none')),
+            value && value.platform === 'win32' && wsl.length === 0 && !value.discoveryError && h('div', { className: 'lwr-note' }, tr('none')),
             value && value.discoveryError && h('div', { className: 'lwr-alert', role: 'alert' }, tr('discoveryError', { message: value.discoveryError })),
-            value && value.distros.length > 0 && h('div', { className: 'lwr-list' },
-              value.distros.map((host) => h(Host, { key: host.name, host, onResult: store.accept }))),
-            value && value.distros.length > 0 && h('div', { className: 'lwr-note' }, tr('requirement', { version: value.minimumDsh })));
+            wsl.length > 0 && h('div', { className: 'lwr-list' },
+              wsl.map((host) => h(Host, { key: host.name, host, onResult: store.accept }))),
+            value && value.distros.length > 0 && h('div', { className: 'lwr-note' }, tr('requirement', { version: value.minimumDsh }))),
+          value && h(SshHosts, { value }));
         }
 
         function ShareRow() {
@@ -1342,9 +1944,221 @@ window.__ModuleLoader__.load({
             }));
         }
 
+        /**
+         * Sync plugins from one host to another (Windows, WSL or SSH). The Host
+         * re-plans before starting, so this panel only chooses plugin names.
+         */
+        function PluginSync({ hosts, initialTarget }) {
+          const tr = useT();
+          const options = [{ name: 'windows', state: 'connected' }, ...hosts];
+          const title = (name) => (name === 'windows' || name === null || name === undefined ? 'Windows' : hostTitle(name));
+          const [source, setSource] = React.useState('windows');
+          const [target, setTarget] = React.useState(initialTarget ?? hosts[0]?.name ?? '');
+          const [plan, setPlan] = React.useState(undefined);
+          const [picked, setPicked] = React.useState([]);
+          const [busy, setBusy] = React.useState(false);
+          const [failure, setFailure] = React.useState('');
+          const [run, setRun] = React.useState(undefined);
+          const stateOf = (name) => options.find((item) => item.name === name)?.state;
+          const ready = source && target && source !== target && stateOf(source) === 'connected' && stateOf(target) === 'connected';
+          const post = (path, data) => call(`api/local-wsl-remote/plugins/${path}`, { method: 'POST', body: JSON.stringify(data) });
+          const wire = (name) => (name === 'windows' ? null : name);
+          const compare = async () => {
+            setBusy(true);
+            setFailure('');
+            setPlan(undefined);
+            try {
+              const value = await post('sync-plan', { source: wire(source), target: wire(target) });
+              setPlan(value);
+              setPicked(value.rows.filter((row) => row.action !== undefined).map((row) => row.name));
+            } catch (error) {
+              setFailure(error.message);
+            } finally {
+              setBusy(false);
+            }
+          };
+          // A run started earlier (another window, a reload) is picked up again.
+          React.useEffect(() => {
+            if (!target) return;
+            post('sync-status', { target }).then((value) => { if (value.run?.status === 'running') setRun(value.run); }).catch(() => {});
+          }, [target]);
+          React.useEffect(() => {
+            if (run?.status !== 'running') return undefined;
+            let stopped = false;
+            const timer = setTimeout(async () => {
+              try {
+                const value = await post('sync-status', { id: run.id });
+                if (stopped || !value.run) return;
+                setRun(value.run);
+                if (value.run.status !== 'running') {
+                  const next = await post('sync-plan', { source: value.run.source, target: value.run.target }).catch(() => undefined);
+                  if (!stopped && next) setPlan(next);
+                }
+              } catch (error) {
+                if (!stopped) setFailure(error.message);
+              }
+            }, 1000);
+            return () => {
+              stopped = true;
+              clearTimeout(timer);
+            };
+          }, [run]);
+          // One plugin or several; while a run between the same two hosts is
+          // working, the Host queues them at its end.
+          const start = async (names) => {
+            setBusy(true);
+            setFailure('');
+            try {
+              setRun((await post('sync', { source: wire(source), target: wire(target), names })).run);
+            } catch (error) {
+              setFailure(error.message);
+            } finally {
+              setBusy(false);
+            }
+          };
+          const stop = async () => {
+            try {
+              setRun((await post('sync-cancel', { id: run.id })).run);
+            } catch (error) {
+              setFailure(error.message);
+            }
+          };
+          const running = run?.status === 'running';
+          // A running run between the hosts on screen accepts more plugins; any other blocks syncing.
+          const samePair = running && run.source === wire(source) && run.target === wire(target);
+          const blocked = busy || (running && (!samePair || Boolean(run.cancelRequested)));
+          // The latest item for a plugin in the running run: waiting, working or already done there.
+          const itemOf = (name) => (running ? run.items.findLast((item) => item.name === name) : undefined);
+          const queued = (name) => ['pending', 'running', 'done'].includes(itemOf(name)?.status);
+          const syncable = plan ? plan.rows.filter((row) => row.action !== undefined) : [];
+          const pickedSyncable = picked.filter((name) => syncable.some((row) => row.name === name) && !queued(name));
+          const toggle = (name) => setPicked((list) => (list.includes(name) ? list.filter((item) => item !== name) : [...list, name]));
+          const select = (value, onChange) => h('select', { className: 'lwr-input', value, disabled: busy || running, onChange: (event) => { onChange(event.target.value); setPlan(undefined); } },
+            options.map((item) => h('option', { key: item.name, value: item.name }, title(item.name))));
+          const stateText = (row) => tr(`sync.state.${row.state}`, { version: row.targetVersion ?? '?', reason: row.reason ?? '' });
+          return h('div', { className: 'lwr-plugins', 'data-lwr-plugin-sync': '' },
+            h('div', null,
+              h('h2', { className: 'lwr-title' }, tr('sync.title')),
+              h('div', { className: 'lwr-note' }, tr('sync.desc'))),
+            h('div', { className: 'lwr-plugin-toolbar', style: { justifyContent: 'flex-start' } },
+              h('label', { className: 'lwr-check' }, tr('sync.from'), select(source, setSource)),
+              h('button', { type: 'button', className: 'lwr-button', disabled: busy || running, onClick: () => { setSource(target); setTarget(source); setPlan(undefined); } }, tr('sync.swap')),
+              h('label', { className: 'lwr-check' }, tr('sync.to'), select(target, setTarget)),
+              h('button', { type: 'button', className: 'lwr-button', 'data-primary': '', disabled: busy || running || !ready, onClick: compare }, tr('sync.load'))),
+            source === target && h('div', { className: 'lwr-note' }, tr('sync.same')),
+            source !== target && !ready && h('div', { className: 'lwr-note' }, tr('sync.connectFirst')),
+            busy && !plan && h('div', { className: 'lwr-note', role: 'status' }, tr('sync.loading')),
+            plan && syncable.length === 0 && !run && h('div', { className: 'lwr-note' }, tr('sync.nothing')),
+            plan && plan.rows.map((row) => h('div', { key: row.name, className: 'lwr-plugin', 'data-lwr-sync-row': row.name },
+              h('label', { className: 'lwr-text', style: { display: 'flex', gap: 8, alignItems: 'flex-start', cursor: row.action ? 'pointer' : 'default' } },
+                h('input', { type: 'checkbox', checked: picked.includes(row.name), disabled: !row.action || blocked || queued(row.name), onChange: () => toggle(row.name) }),
+                h('span', null,
+                  h('span', { className: 'lwr-plugin-name', title: row.name }, pluginTitle(row)),
+                  row.version && h('span', { className: 'lwr-plugin-version' }, row.version),
+                  h('span', { className: 'lwr-tag', 'data-where': row.state === 'same' ? 'both' : row.action ? 'both-differ' : 'windows' }, stateText(row)),
+                  row.reason && row.state === 'unsupported' && h('div', { className: 'lwr-note' }, tr(`sync.reason.${row.reason}`, { source: row.source ?? '' })),
+                  row.git && h('div', { className: 'lwr-note', 'data-lwr-sync-git': row.name },
+                    tr('sync.git.from', { remote: row.git.remote, commit: row.git.commit.slice(0, 7) }),
+                    row.git.unpushed ? ` ${tr('sync.git.unpushed', { count: row.git.unpushed })}` : '',
+                    row.git.dirty ? ` ${tr('sync.git.dirty')}` : ''))),
+              row.action && h('div', { className: 'lwr-actions' },
+                queued(row.name)
+                  ? h('span', { className: 'lwr-tag', 'data-lwr-sync-status': row.name }, tr(`sync.item.${itemOf(row.name).status}`))
+                  : h('button', {
+                    type: 'button',
+                    className: 'lwr-button',
+                    'data-lwr-sync-one': row.name,
+                    title: tr('sync.oneTitle', { name: row.name }),
+                    disabled: blocked,
+                    onClick: () => start([row.name]),
+                  }, tr(`sync.action.${row.action}`, { version: row.version ?? '' }))))),
+            plan && plan.targetOnly.length > 0 && h('div', { className: 'lwr-note' }, `${tr('sync.targetOnly')} ${plan.targetOnly.map((item) => item.name).join(', ')}`),
+            plan && syncable.length > 1 && h('div', { className: 'lwr-actions' },
+              h('button', { type: 'button', className: 'lwr-button', disabled: blocked, onClick: () => setPicked(syncable.map((row) => row.name)) }, tr('sync.selectAll')),
+              h('button', { type: 'button', className: 'lwr-button', 'data-primary': '', disabled: blocked || pickedSyncable.length === 0, onClick: () => start(pickedSyncable) }, tr('sync.run', { count: pickedSyncable.length }))),
+            run && h('div', { className: 'lwr-job', role: 'status', 'aria-live': 'polite' },
+              h('div', { className: 'lwr-job-head' },
+                h('span', { className: 'lwr-plugin-name' }, `${title(run.source)} → ${title(run.target)}`),
+                h('span', { className: 'lwr-tag' }, running ? `${Math.round(run.elapsedMs / 1000)}s` : tr(`plugins.status.${run.status}`)),
+                h('span', { style: { flex: 1 } }),
+                running && h('button', { type: 'button', className: 'lwr-button', disabled: Boolean(run.cancelRequested), onClick: stop }, tr(run.cancelRequested ? 'plugins.cancelling' : 'sync.cancel')),
+                !running && h('button', { type: 'button', className: 'lwr-button', onClick: () => setRun(undefined) }, tr('sync.close'))),
+              run.items.map((item) => h('div', { key: item.name, className: 'lwr-note' },
+                `${item.name} · ${tr(`sync.action.${item.action}`, { version: '' }).trim()} · ${tr(`sync.item.${item.status}`)}${item.error ? ` — ${item.error}` : ''}`)),
+              run.job?.stalled && running && !run.cancelRequested && h('div', { className: 'lwr-alert', 'data-lwr-sync-stalled': '' }, tr('plugins.stalled', { seconds: Math.round(run.job.silentMs / 1000) })),
+              run.job && running && h('pre', { className: 'lwr-job-log' }, run.job.lines.length > 0 ? run.job.lines.join('\n') : tr('plugins.waitingOutput')),
+              run.status === 'done' && h('div', { className: 'lwr-note' }, tr('sync.done')),
+              run.status === 'failed' && h('div', { className: 'lwr-alert' }, tr('sync.failed')),
+              run.restartRequired && !running && h('div', { className: 'lwr-info' }, tr(run.target === null ? 'sync.restartWindows' : 'sync.restartRemote'))),
+            failure && h('div', { className: 'lwr-alert', role: 'alert' }, failure));
+        }
+
+        // Use the plugin page's supported tab extension; host selection stays local
+        // to this browser, and every remote operation still carries its host explicitly.
+        function WslPluginTab() {
+          const tr = useT();
+          const status = useStatus();
+          const [selected, setSelected] = React.useState('');
+          const [connecting, setConnecting] = React.useState(false);
+          const [failure, setFailure] = React.useState('');
+          const hosts = status.value?.distros ?? [];
+          const host = hosts.find((item) => item.name === selected)
+            ?? hosts.find((item) => item.state === 'connected') ?? hosts[0];
+          const connect = async () => {
+            if (!host) return;
+            setConnecting(true);
+            setFailure('');
+            try {
+              store.accept(await call('api/local-wsl-remote/connect', { method: 'POST', body: JSON.stringify({ distro: host.name }) }));
+            } catch (error) {
+              setFailure(error.message);
+            } finally {
+              setConnecting(false);
+            }
+          };
+          return h('section', { className: 'lwr-plugin-page', 'data-wsl-plugin-page': '' },
+            h('style', null, css),
+            h('div', { className: 'lwr-plugin-toolbar' },
+              h('label', { className: 'lwr-check' }, tr('ws.host'),
+                h('select', { className: 'lwr-input', value: host?.name ?? '', disabled: connecting || hosts.length === 0, onChange: (event) => { setSelected(event.target.value); setFailure(''); } },
+                  hosts.map((item) => h('option', { key: item.name, value: item.name }, hostTitle(item.name))))),
+              host && h('span', { className: 'lwr-note' }, tr(`state.${host.state}`))),
+            status.status === 'loading' && h('div', { role: 'status' }, tr('loading')),
+            status.status === 'error' && h('div', { role: 'alert', className: 'lwr-alert' }, status.message),
+            status.status === 'ready' && hosts.length === 0 && h('div', { className: 'lwr-note' }, tr('none')),
+            failure && h('div', { role: 'alert', className: 'lwr-alert' }, failure),
+            host?.state === 'connected' ? h(Plugins, { key: host.name, host })
+              : host && h('div', { className: 'lwr-plugin-disconnected' },
+                h('p', { className: 'lwr-note' }, tr('plugins.connectFirst', { distro: hostTitle(host.name) })),
+                host.requirement && h(Requirement, { host }),
+                h('button', { type: 'button', className: 'lwr-button', disabled: connecting || host.state === 'connecting', onClick: connect }, tr(connecting || host.state === 'connecting' ? 'state.connecting' : 'connect'))),
+            hosts.length > 0 && h(PluginSync, { key: `sync:${host?.name ?? ''}`, hosts, initialTarget: host?.name }));
+        }
+        ctx.slots.inject('plugins.tab', () => {
+          // There is no separate label slot for the built-in Installed tab.
+          // Adapt only that one translation; leave every Windows operation and
+          // all other locale lookups unchanged, and restore it on disposal.
+          const locale = Reflect.get(ctx.locale, Symbol.for('cordis.original')) ?? ctx.locale;
+          const original = locale.translate;
+          if (typeof original === 'function') ctx.effect(() => {
+            const own = Object.prototype.hasOwnProperty.call(locale, 'translate');
+            const translate = function (ns, key, params) {
+              return ns === 'pluginManager' && key === 'installedTab' ? 'Windows' : original.call(this, ns, key, params);
+            };
+            locale.translate = translate;
+            return () => {
+              if (locale.translate !== translate) return;
+              if (own) locale.translate = original;
+              else delete locale.translate;
+            };
+          }, 'wsl-remote: Windows plugin tab label');
+          return ctx.slots.register({ name: 'plugins.tab', id: 'wsl-plugins', label: 'WSL / SSH', order: -100 }, WslPluginTab);
+        });
+
         ctx.slots.inject('settings.general.item', () => ctx.slots.register({ name: 'settings.general.item', id: 'local-wsl-remote-connections', order: 30 }, ConnectionsRow));
         ctx.slots.inject('settings.general.item', () => ctx.slots.register({ name: 'settings.general.item', id: 'local-wsl-remote-share', order: 31 }, ShareRow));
 
+        applyModels(ctx, { useT, useStatus, store });
         applyWorkspaces(ctx, { t, useT, call, store });
       },
     };

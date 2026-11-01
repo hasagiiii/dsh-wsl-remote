@@ -8,6 +8,7 @@ Use WSL from DeepSeek Harness the way the Codex desktop app does. **Install it o
 - **Open the WSL dsh's own UI**: through a Windows loopback relay, in the sidebar or a browser.
 - **Shared sign-in** (optional): the WSL dsh uses the Windows credential store directly.
 - **`dsh-harness` command**: run `dsh-harness .` in a WSL terminal to open the current directory as a WSL workspace in DeepSeek Harness, like `code .`.
+- **SSH remote hosts**: used exactly like WSL. Add `user@host`, `host:port` or a `Host` from `~/.ssh/config` under Settings → General → **SSH remote hosts**; once connected, the workspaces and sessions of your own `dsh` on the server are merged into this window the same way, and "Add workspace" offers **SSH**. See [SSH remote hosts](#ssh-remote-hosts).
 
 | | Windows workspace | WSL workspace |
 |---|---|---|
@@ -75,17 +76,35 @@ The folder is registered as **a workspace of that distribution's dsh**: it appea
 
 A `\\wsl.localhost\…` workspace added by an earlier version is merged with the WSL workspace of the same folder into one row, shown with the Linux path. New sessions in it run in the WSL dsh; old sessions that ran on Windows stay where they are.
 
+After a successful connection, sidebar metadata is cached in `wsl-remote-cache.json` under the Windows DSH home. Subsequent launches immediately show the last workspace and session list, preserving workspace expansion while WSL connects and refreshes in the background. Failed connections retain the last list. The first launch after upgrading needs one successful connection to populate the cache; previously lost expansion preferences need to be set once again. Only sidebar metadata is stored, without conversation bodies, pending input or credentials. Items deleted remotely disappear after a successful refresh.
+
 ### Plugins: which side has what
 
-A WSL session's agent (tools, skills, MCP servers, model providers) runs on the plugins installed in the WSL dsh; the interface of this window, and its own plugin page, are always the Windows ones. **WSL plugins** next to a connected distribution in Settings → General lists that dsh's plugins, each marked:
+Open **Plugins** from the sidebar and switch between the **Windows / WSL** tabs. Windows retains the local plugin list and management actions. WSL lets you select a distribution and lists only its installed plugins, with its profile shown. A disconnected distribution offers Connect instead of showing another host's list. General settings now contains connection settings only.
+
+A WSL session's agent (tools, skills, MCP servers, model providers) uses the WSL dsh's plugins. The WSL tab also compares their installations with Windows:
 
 - **WSL only**: WSL sessions have it, Windows sessions do not;
 - **Windows has x.y.z**: installed on both sides, in different versions;
 - **also on Windows**: installed on both sides, same version.
 
-Below them, **Installed on Windows only** lists the plugins WSL sessions do not have. From the panel you can enable, disable and remove WSL plugins, install one by name or spec, or **Install in WSL** a Windows-only one (a plugin linked from a Windows folder is linked through `/mnt/<drive>/…`). The changes run through the WSL dsh's own plugin manager; when one waits for a restart, the panel offers to restart the dsh in WSL. **Manage in the WSL dsh's own UI** opens its full plugin page.
+The WSL tab supports refresh, enable, disable, remove and installation by package name or WSL install spec. Each operation explicitly names the selected distribution and runs through its own plugin manager; Windows actions still target the Windows profile. When a change waits for a restart, the tab offers to restart the dsh in WSL. You can also open that dsh's full UI.
 
 An install runs in the background: the panel shows its phase, elapsed time and pnpm's output live, and **Cancel install** stops it through the WSL plugin manager, which restores the profile. If pnpm prints nothing for a minute, the panel says it may be stuck and offers the cancel; the window never waits on an install. An install started from one window is picked up again by another window or after a reload.
+
+**Sync plugins** (below the list in the same tab) copies your plugins from any host to any other: Windows, a WSL distribution or an SSH host, in either direction. Choose **From** and **To**, select **Compare**, then sync a single plugin with the **Install** / **Update** / **Enable** button on its row, or tick several and select **Sync selected**. Syncing more plugins between the same two hosts while a sync runs queues them at its end. Each plugin shows what it needs on the target (missing, other version, disabled, in sync) and is installed one at a time through the target's own plugin manager, with live output and **Stop sync**; disabled ones are enabled. Registry installs are pinned to the source's version; git specs are kept as recorded; a plugin installed from a Windows folder installs through `/mnt/<drive>` in WSL, while an SSH host cannot reach that folder. When the target cannot reach a plugin's folder but the folder is the root of a git repository whose commit is on a remote branch, the plugin installs from git instead, pinned to that commit (the newest pushed one if local commits are ahead); the panel names the repository and commit and says when unpushed commits or uncommitted changes are left out. Otherwise the panel says why it cannot sync. Plugins only the target has are listed and left alone; nothing is removed. The Host makes the plan again when a sync starts, so a window only chooses plugin names, never install specs. When a plugin needs a restart, the panel says so.
+
+### Models: switch hosts and sync configuration
+
+Open **Settings → Models** and switch between **Windows / WSL**. Windows retains the local model editor. WSL lets you select a distribution and edit its providers, API keys, base URLs and model lists. Saves go to that distribution; select **Connect** first if it is disconnected.
+
+Each provider has its own sync button: **Sync to WSL** under Windows, or **Sync to Windows** under WSL. Review that provider’s configuration differences, then **Confirm sync**. Other providers remain untouched. Target-only fields and models are preserved; matching fields use source values. Changes to the target after preview invalidate that preview, so review a fresh one.
+
+For plugin-provided providers, select **Install provider plugin** when the target lacks the plugin, or **Enable provider plugin** when it is disabled. Installation uses the source host’s recorded package source, works in both directions, shows progress and logs, and supports cancellation. After installation, review a fresh configuration preview and confirm the sync separately. Ambiguous ownership, incompatible platforms and local paths that cannot be translated are explained. Local plugins in native WSL Linux directories must first be published or placed on a Windows drive accessible to both hosts. Plugins requiring a restart display a notice.
+
+A sync can copy the provider's API keys too. The preview names each key the target lacks or holds with a different value (marked as replaced) under **Also copy API keys**, ticked by default; untick it to sync the configuration only. Keys the target already holds with the same value are left alone. Values are read from the source host's credential store and written with the target's `credentials/set` inside the Windows Host process: no preview, result, log or window ever receives one, and an error names the key, not its value. On a remote host the value is read by the agent inside its dsh, so a connection made before this version must be reconnected first. Keys that cannot be copied stay listed as missing, to be filled in under the target tab. With **Share sign-in** enabled, both hosts already use the Windows credential store; editing a shared key on either host affects both.
+
+After updating this plugin, disable and re-enable `@local/dsh-wsl-remote` in the plugin manager, then refresh the window to load the model page. An application restart is unnecessary.
 
 ### Shared sign-in
 
@@ -108,6 +127,25 @@ dsh-harness --focus    # only bring the DeepSeek Harness window to the front
 ```
 
 It starts DeepSeek Harness on Windows through WSL interop (or brings it to the front) and hands the directory to the plugin through a request file in `<DSH home>\wsl-remote\requests`; WSL opens no port.
+
+### SSH remote hosts
+
+An SSH host is used exactly like a WSL distribution; you only add it yourself:
+
+1. Install dsh on the server, as in WSL: `npm i -g @deepseek-ai/dsh`, the same release as on Windows.
+2. Open Settings → General → **SSH remote hosts**, enter `user@host`, `host:port` or a `Host` alias from `~/.ssh/config`, and select **Add**. Concrete hosts from `~/.ssh/config` are offered as one-click buttons.
+3. Select **Connect**. From here on it is the WSL flow: the first connect deploys the agent to `~/.dsh-wsl-remote/agent/<version>` on the server, checks `dsh --version` and starts `dsh --profile web`; workspaces and sessions are merged into this window with an **SSH · <host>** badge; the remote tab of the Plugins and Models pages lists SSH hosts too; sign-in can be shared; connections reconnect and clean up the server-side process group on disconnect.
+4. When adding a workspace, choose **SSH**, pick the host, then a folder in the server's Linux file system.
+
+The plugin uses Windows' bundled OpenSSH (`C:\Windows\System32\OpenSSH\ssh.exe`) with your `~/.ssh/config`, keys and ssh-agent. Everything travels over the stdio of one SSH session: the server opens no extra port and no port forwarding is used. Connections are non-interactive (`BatchMode=yes`) and **cannot ask for a password or confirm a host key**: set up key-based login and run `ssh <host>` once in PowerShell to accept the host key. Authentication, host-key and network failures are explained on the Settings page.
+
+Differences from WSL:
+
+- There is no `dsh-harness` command (it relies on WSL interop).
+- "Open in app" is not available for files on an SSH host: Windows has no path for them.
+- A plugin installed from a Windows folder (`link:F:/…`) cannot be installed from that folder on an SSH host, which cannot see Windows drives; it installs by package name from the registry instead, and the Models page's **Install provider plugin** explains why for such providers.
+
+After removing an SSH host, only `~/.dsh-wsl-remote` remains on the server; remove it with `rm -rf ~/.dsh-wsl-remote`.
 
 ## How it works
 
@@ -158,10 +196,11 @@ Results are remembered, so each id is resolved once. A workspace or session a di
 - `lib/bridge/routes.js`: plugin HTTP routes and WebSocket upgrades of WSL sessions, answered by the WSL dsh.
 - `lib/bridge/merge.js`: the pure parts: ids a call or request names, workspace merging, the distribution of a Linux path.
 - `lib/bridge/host-client.js`: the WSL dsh client, assembled from DeepSeek Harness's own Client packages.
-- `lib/remote.js`: one remote connection: deploy, version gate, launch, loopback relay, credential answers, reconnect with backoff.
-- `server/launch.sh`, `server/agent.mjs`: start `dsh` through the login shell; the agent is a Cordis plugin loaded with `dsh --patch` that runs only when the Windows Host started it.
+- `lib/remote.js`: one remote connection (WSL or SSH): deploy, version gate, launch, loopback relay, credential answers, reconnect with backoff.
+- `lib/transport.js`: run a Linux argv on a remote host: `wsl.exe -d` for WSL, `ssh -T -o BatchMode=yes` for SSH (each argument single-quoted); `~/.ssh/config` parsing.
+- `server/launch.sh`, `server/agent.mjs`: start `dsh` through the login shell; the agent is a Cordis plugin loaded with `dsh --patch` that runs only when the Windows Host started it. A marker line precedes the mux frames on the pipe, so an SSH login banner is discarded.
 - `server/dsh-harness.sh`, `lib/requests.js`: the `dsh-harness` command.
-- `lib/linux-fs.js`: the WSL folder picker, and reading the distribution and Linux path out of a `\\wsl.localhost` path.
+- `lib/linux-fs.js`: the WSL / SSH folder picker, and the picker addresses (`\\wsl.localhost\…`, `ssh://<host>/…`) to and from a host and Linux path.
 
 ## Limitations
 
@@ -206,3 +245,11 @@ $env:DSH_HOME = $h; $env:DSH_TELEMETRY_DISABLED = '1'; $env:DSH_CLIENT_VERSION =
 ```
 
 Bump `AGENT_VERSION` in `lib/remote.js` when `server/agent.mjs`, `server/launch.sh`, `server/dsh-harness.sh` or `lib/mux.js` change.
+
+The SSH path is tested without a real server: `test/fake-ssh.mjs` takes ssh's real argv, prints a login banner on stdout, and hands the command string to a WSL distribution's shell:
+
+```powershell
+& $dsh --test --test-isolation=none test/ssh.mjs test/client-ssh.mjs     # argv, addresses, ~/.ssh/config, banner skipping, settings, routing, UI
+$env:DSH_FAKE_SSH_DISTRO = 'Ubuntu-26.04'
+& $dsh --import ./test/stub-cordis.mjs test/ssh-remote.mjs              # deploy, launch, relay, folder listing and process-group cleanup over the SSH code path
+```

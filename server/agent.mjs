@@ -24,7 +24,8 @@ export const name = 'wsl-remote-agent';
 
 /** Records that stay in this distribution: its own browser-cookie secret. */
 const LOCAL_ONLY = /^client-connection\//;
-const AGENT_PROTOCOL = 1;
+/** 2: answers `resolve-credential` for model sync. */
+const AGENT_PROTOCOL = 2;
 
 const log = (message) => process.stderr.write(`[wsl-remote agent] ${message}\n`);
 
@@ -106,6 +107,22 @@ export function serve(ctx, input, output, options) {
         if (mutate === undefined) throw new Error('unknown mutation');
         const next = await mutate(message.params.current ?? undefined);
         send({ id: message.id, result: next ?? null });
+      } catch (error) {
+        send({ id: message.id, error: error?.message ?? String(error) });
+      }
+      return;
+    }
+    // Model sync on the Windows Host copies a provider's API key between hosts:
+    // it asks for one reference's value here and writes it on the other side.
+    // Only the Windows Host can send on this pipe; nothing here reaches a browser.
+    if (message.method === 'resolve-credential') {
+      try {
+        const ref = message.params?.ref;
+        if (typeof ref !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ref)) throw new Error('invalid credential reference');
+        const provider = ctx.get('credentials');
+        if (provider === undefined) throw new Error('this dsh has no credential provider');
+        const hit = await provider.resolve(ref);
+        send({ id: message.id, result: typeof hit?.value === 'string' && hit.value.length > 0 ? hit.value : null });
       } catch (error) {
         send({ id: message.id, error: error?.message ?? String(error) });
       }

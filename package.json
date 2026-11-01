@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-wsl-remote",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "private": true,
   "type": "module",
-  "description": "WSL for DeepSeek Harness, like the Codex desktop app: each WSL distribution runs your own dsh (WSL ~/.dsh, models, plugins and Linux files), and its workspaces and sessions appear in the Windows window beside the Windows ones.",
+  "description": "WSL and SSH remote hosts for DeepSeek Harness, like the Codex desktop app: each WSL distribution or SSH server runs your own dsh (its ~/.dsh, models, plugins and Linux files), and its workspaces and sessions appear in the Windows window beside the Windows ones.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -11,7 +11,11 @@
   },
   "scripts": {
     "test": "node test/unit.mjs",
-    "test:remote": "node test/remote.mjs"
+    "test:models": "node --test test/models.mjs test/model-plugins.mjs test/client-models.mjs",
+    "test:ssh": "node --test --test-isolation=none test/ssh.mjs test/client-ssh.mjs test/plugin-sync.mjs",
+    "test:remote": "node test/remote.mjs",
+    "test:ssh-remote": "node test/ssh-remote.mjs",
+    "test:startup": "node --test --test-isolation=none test/bridge-cache.mjs test/bridge-startup.mjs"
   },
   "engines": {
     "dsh": ">=0.2.1-rc.5 <0.2.2-0"
@@ -60,7 +64,9 @@
       "immediately": true,
       "inject": [
         "@deepseek-ai/dsh-client-ui-settings-general",
-        "@deepseek-ai/dsh-client-ui-workspace"
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-client-ui-settings-models"
       ]
     }
   }

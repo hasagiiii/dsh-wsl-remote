@@ -23,6 +23,7 @@ import { fromUncPath, toUncPath } from '../lib/linux-fs.js';
 import { comparePlugins, wslInstallSpec } from '../lib/plugins.js';
 import { PluginInstalls, STALL_MS } from '../lib/installs.js';
 import { EventEmitter } from 'node:events';
+import { runInNewContext } from 'node:vm';
 
 let failures = 0;
 async function test(name, body) {
@@ -49,7 +50,7 @@ await test('settings: version-1 file migrates to remote connections', () => {
   writeFileSync(file, JSON.stringify({ environment: 'Ubuntu', node: '/usr/bin/node', serverDir: '/x', shells: { Ubuntu: '/usr/bin/zsh' } }));
   const { settings, migrated } = loadSettings(file);
   assert.equal(migrated, true);
-  assert.deepEqual(settings, { ports: {}, version: 2, shareLogin: true, profile: 'web', autoConnect: [], workspaceOrder: [] });
+  assert.deepEqual(settings, { ports: {}, version: 2, shareLogin: true, profile: 'web', autoConnect: [], workspaceOrder: [], sshHosts: [] });
   assert.equal(JSON.parse(readFileSync(file, 'utf8')).version, 2);
   assert.equal(loadSettings(file).migrated, false);
 });
@@ -263,6 +264,325 @@ await test('bridge: a WSL workspace just added is routable before its follow str
   assert.deepEqual(bridge.workspaceHosts(), { l9: 'Ubuntu' });
 });
 
+// A bounded wait makes a leaked stream an assertion failure, not a hung unit run.
+async function within(promise, message) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), 500);
+    })]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function pendingSource(first) {
+  let initial = true;
+  let waiting;
+  let closed = false;
+  return {
+    returned: false,
+    [Symbol.asyncIterator]() { return this; },
+    next() {
+      if (closed) return Promise.resolve({ done: true });
+      if (initial) {
+        initial = false;
+        return Promise.resolve({ value: first, done: false });
+      }
+      return new Promise((resolve) => { waiting = resolve; });
+    },
+    return() {
+      this.returned = true;
+      closed = true;
+      waiting?.({ done: true });
+      return Promise.resolve({ done: true });
+    },
+  };
+}
+
+for (const [method, opening] of [
+  ['mergedWorkspaceFollow', { type: 'baseline', value: emptyWorkspaceState() }],
+  ['mergedControl', { type: 'baseline', value: { projections: {} } }],
+  ['mergedEvents', { type: 'ready', clientId: 'browser-before-reload' }],
+]) {
+  await test(`bridge lifecycle: stop closes active ${method} and its Windows source`, async () => {
+    const { WslBridge } = await import('../lib/bridge/bridge.js');
+    const bridge = new WslBridge({
+      logger: { info() {}, warn() {} },
+      hosts: { distros: () => [], loadOrder: () => [], subscribe: () => () => {} },
+      windows: { knows: async () => false, workspaces: emptyWorkspaceState },
+    });
+    const source = pendingSource(opening);
+    const controller = new AbortController();
+    const stream = bridge[method](source, controller.signal);
+    let pending;
+    try {
+      assert.equal((await within(stream.next(), `${method}: no opening frame`)).done, false);
+      pending = stream.next();
+      // In particular, let mergedEvents register after yielding its initial ready frame.
+      await Promise.resolve();
+      await within(bridge.stop(), `${method}: bridge.stop hung`);
+      assert.equal((await within(pending, `${method}: consumer remained open after bridge.stop`)).done, true);
+      assert.equal(source.returned, true, 'the original Windows iterator is released');
+      assert.equal(bridge.listenerCount('workspace'), 0);
+      assert.equal(bridge.listenerCount('projection'), 0);
+      assert.equal(bridge.eventStreams.size, 0);
+    } finally {
+      controller.abort();
+      await source.return();
+      if (pending) await within(pending, `${method}: cleanup failed`).catch(() => {});
+      await within(stream.return(), `${method}: iterator cleanup failed`).catch(() => {});
+    }
+  });
+}
+
+await test('bridge lifecycle: stop during control readiness cannot yield a retired baseline', async () => {
+  const { WslBridge } = await import('../lib/bridge/bridge.js');
+  const bridge = new WslBridge({
+    logger: { info() {}, warn() {} },
+    hosts: { distros: () => [], loadOrder: () => [], subscribe: () => () => {} },
+    windows: { knows: async () => false, workspaces: emptyWorkspaceState },
+  });
+  const ready = Promise.withResolvers();
+  const enteredReadiness = Promise.withResolvers();
+  bridge.live.set('Ubuntu', {
+    abort: new AbortController(),
+    ready: { control: ready.promise },
+    resolvers: { control: ready.resolve },
+    client: Promise.resolve({ close() {} }),
+  });
+  const originalReady = bridge.hostsReady.bind(bridge);
+  bridge.hostsReady = (kind) => { enteredReadiness.resolve(); return originalReady(kind); };
+  const source = pendingSource({ type: 'baseline', value: { projections: {} } });
+  const controller = new AbortController();
+  const stream = bridge.mergedControl(source, controller.signal);
+  const first = stream.next();
+  try {
+    await within(enteredReadiness.promise, 'control did not reach host-readiness wait');
+    await within(bridge.stop(), 'stop during readiness hung');
+    assert.equal((await within(first, 'stopped control still awaits its first frame')).done, true,
+      'a bridge stopped during its readiness wait must not publish an opening baseline');
+  } finally {
+    controller.abort();
+    ready.resolve();
+    await source.return();
+    await within(stream.return(), 'control readiness cleanup failed').catch(() => {});
+  }
+});
+
+for (const cancellation of ['bridge stop', 'consumer abort']) {
+  await test(`bridge lifecycle: ${cancellation} cancels a pending Windows source through Gateway`, async () => {
+    const { WslBridge, wrapGateway } = await import('../lib/bridge/bridge.js');
+    const bridge = new WslBridge({
+      logger: { info() {}, warn() {} },
+      hosts: { distros: () => [], loadOrder: () => [], subscribe: () => () => {} },
+      windows: { knows: async () => false, workspaces: emptyWorkspaceState },
+    });
+    const caller = new AbortController();
+    const sourceEnded = Promise.withResolvers();
+    let sourceSignal;
+    const gateway = {
+      dispatchRpc() {},
+      openWireStream(endpoint, payload, uplink, peer, signal) {
+        sourceSignal = signal;
+        return (async function* () {
+          try {
+            yield { type: 'baseline', value: emptyWorkspaceState() };
+            if (!signal.aborted) await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+          } finally {
+            sourceEnded.resolve();
+          }
+        })();
+      },
+    };
+    const dispose = wrapGateway(gateway, bridge);
+    const stream = await gateway.openWireStream('workspace/follow', {}, undefined, undefined, caller.signal);
+    try {
+      assert.equal((await within(stream.next(), 'no Windows opening snapshot')).done, false);
+      const pending = stream.next();
+      if (cancellation === 'bridge stop') await bridge.stop();
+      else caller.abort();
+      assert.equal((await within(pending, 'merged stream did not terminate')).done, true);
+      await within(sourceEnded.promise, 'Windows generator remained blocked after cancellation');
+      assert.equal(sourceSignal.aborted, true);
+      assert.equal(caller.signal.aborted, cancellation === 'consumer abort', 'bridge stop must not abort its caller controller');
+      assert.equal(bridge.lifetime.signal.aborted, cancellation === 'bridge stop', 'consumer cancellation must not stop the shared bridge');
+    } finally {
+      caller.abort();
+      await bridge.stop();
+      await within(stream.return(), 'Windows source cleanup failed').catch(() => {});
+      dispose();
+    }
+  });
+}
+
+function gatewayFixture() {
+  const calls = [];
+  const gateway = {};
+  const dispatch = function () { assert.equal(this, gateway); calls.push('original-rpc'); return 'rpc-result'; };
+  const open = function () { assert.equal(this, gateway); calls.push('original-stream'); return 'stream-result'; };
+  Object.defineProperty(gateway, 'dispatchRpc', { configurable: true, enumerable: false, writable: false, value: dispatch });
+  Object.defineProperty(gateway, 'openWireStream', { configurable: true, enumerable: true, writable: true, value: open });
+  const descriptors = Object.getOwnPropertyDescriptors(gateway);
+  const bridge = (name) => ({
+    dispatchRpc(endpoint, payload, signal, peer, windows) {
+      calls.push(`${name}-rpc`);
+      return windows(endpoint, payload, signal, peer);
+    },
+    openStream(endpoint, payload, uplink, peer, signal, windows) {
+      calls.push(`${name}-stream`);
+      return windows();
+    },
+  });
+  return { gateway, calls, descriptors, bridge };
+}
+
+await test('bridge lifecycle: replacing Gateway wrappers does not dispatch through the old bridge', async () => {
+  const { wrapGateway } = await import('../lib/bridge/bridge.js');
+  const { gateway, calls, bridge } = gatewayFixture();
+  const disposeA = wrapGateway(gateway, bridge('old'));
+  const disposeB = wrapGateway(gateway, bridge('new'));
+  try {
+    assert.equal(await gateway.dispatchRpc('session/create', {}), 'rpc-result');
+    assert.equal(await gateway.openWireStream('workspace/follow', {}), 'stream-result');
+    assert.deepEqual(calls, ['new-rpc', 'original-rpc', 'new-stream', 'original-stream']);
+  } finally {
+    disposeA();
+    disposeB();
+  }
+});
+
+await test('bridge lifecycle: an old disposer cannot remove a newer Gateway wrapper', async () => {
+  const { wrapGateway } = await import('../lib/bridge/bridge.js');
+  const { gateway, calls, bridge } = gatewayFixture();
+  const disposeA = wrapGateway(gateway, bridge('old'));
+  const disposeB = wrapGateway(gateway, bridge('new'));
+  try {
+    disposeA();
+    assert.equal(typeof gateway.dispatchRpc, 'function', 'new RPC wrapper survives old disposal');
+    assert.equal(typeof gateway.openWireStream, 'function', 'new stream wrapper survives old disposal');
+    assert.equal(await gateway.dispatchRpc('session/create', {}), 'rpc-result');
+    assert.equal(await gateway.openWireStream('workspace/follow', {}), 'stream-result');
+    assert.deepEqual(calls, ['new-rpc', 'original-rpc', 'new-stream', 'original-stream']);
+  } finally {
+    disposeB();
+  }
+});
+
+await test('bridge lifecycle: Gateway disposal restores original own property descriptors', async () => {
+  const { wrapGateway } = await import('../lib/bridge/bridge.js');
+  const { gateway, descriptors, bridge } = gatewayFixture();
+  const dispose = wrapGateway(gateway, bridge('only'));
+  dispose();
+  assert.deepEqual(Object.getOwnPropertyDescriptor(gateway, 'dispatchRpc'), descriptors.dispatchRpc);
+  assert.deepEqual(Object.getOwnPropertyDescriptor(gateway, 'openWireStream'), descriptors.openWireStream);
+});
+
+function clientActivationFixture() {
+  const requests = [];
+  const timers = new Map();
+  let nextTimer = 0;
+  let reconnects = 0;
+  let connectionInjection;
+  let dispose;
+  let plugin;
+  runInNewContext(readFileSync(new URL('../client.js', import.meta.url), 'utf8'), {
+    window: { __ModuleLoader__: { load(value) { plugin = value; } } },
+    AbortController,
+    console,
+    fetch(path, init) {
+      const deferred = Promise.withResolvers();
+      requests.push({ path, init, ...deferred });
+      return deferred.promise;
+    },
+    setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, delay }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+  }, { filename: 'client.js' });
+  const client = plugin.factory((name) => {
+    if (name === 'react') return { createElement() {} };
+    return {};
+  });
+  client.apply({
+    inject(services, callback) {
+      if (services.length === 1 && services[0] === 'connection') connectionInjection = callback;
+    },
+    effect() {},
+    slots: { inject() {} },
+    locale: { bind: () => (key) => key },
+  });
+  assert.equal(typeof connectionInjection, 'function', 'the browser plugin registers activation with its connection');
+  connectionInjection({
+    connection: { reconnect() { reconnects++; } },
+    effect(start) { dispose = start(); },
+  });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  return {
+    requests,
+    timers,
+    reconnects: () => reconnects,
+    dispose: () => dispose(),
+    async respond(index, status) {
+      requests[index].resolve({ ok: true, json: async () => status });
+      await flush();
+    },
+    async fail(index) {
+      requests[index].reject(new Error('Host plugin is still loading'));
+      await flush();
+    },
+    async retry() {
+      assert.equal(timers.size, 1, 'only one readiness retry is scheduled');
+      const [id, timer] = timers.entries().next().value;
+      timers.delete(id);
+      timer.callback();
+      await flush();
+    },
+  };
+}
+
+await test('browser activation: wait for bridge readiness, retry failures, reconnect exactly once', async () => {
+  const client = clientActivationFixture();
+  try {
+    assert.equal(client.requests.length, 1);
+    assert.equal(client.requests[0].path, 'api/local-wsl-remote/connections');
+    assert.equal(client.requests[0].init.credentials, 'same-origin');
+    assert.equal(client.reconnects(), 0);
+    await client.respond(0, { bridgeReady: false });
+    assert.equal(client.reconnects(), 0, 'opening streams before the Host merge is ready would retain Windows-only state');
+    await client.retry();
+    await client.fail(1);
+    assert.equal(client.reconnects(), 0);
+    await client.retry();
+    await client.respond(2, { bridgeReady: true });
+    assert.equal(client.reconnects(), 1);
+    assert.equal(client.requests.length, 3);
+    assert.equal(client.timers.size, 0, 'ready activation must not leave a recurring reconnect timer');
+  } finally {
+    client.dispose();
+  }
+});
+
+await test('browser activation: disposal aborts pending readiness fetch and ignores its late response', async () => {
+  const client = clientActivationFixture();
+  const signal = client.requests[0].init.signal;
+  assert.equal(signal.aborted, false);
+  client.dispose();
+  assert.equal(signal.aborted, true);
+  // A fetch implementation may finish despite cancellation; no retired instance may reconnect.
+  await client.respond(0, { bridgeReady: true });
+  assert.equal(client.reconnects(), 0);
+  assert.equal(client.timers.size, 0);
+});
+
+await test('browser activation: disposal cancels a scheduled readiness retry', async () => {
+  const client = clientActivationFixture();
+  await client.respond(0, { bridgeReady: false });
+  assert.equal(client.timers.size, 1);
+  client.dispose();
+  assert.equal(client.timers.size, 0);
+  assert.equal(client.requests.length, 1);
+  assert.equal(client.reconnects(), 0);
+});
+
 await test('plugins: where each one is installed, and how a Windows one installs in WSL', () => {
   const wsl = [
     { name: '@deepseek-ai/dsh-base', availability: 'installation', installed: false, version: '0.2.1', enabled: true },
@@ -339,7 +659,7 @@ await test('plugin installs: background job with live output, stall notice and c
 await test('settings: invalid fields are dropped', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'wslr-')), 'wsl-remote.json');
   const value = writeSettings({ shareLogin: false, profile: 'bad name', autoConnect: ['Ubuntu', 'x y', 'Ubuntu'], ports: { Ubuntu: 40123, Bad: 80 } }, file);
-  assert.deepEqual(value, { ports: { Ubuntu: 40123 }, version: 2, shareLogin: false, profile: 'web', autoConnect: ['Ubuntu'], workspaceOrder: [] });
+  assert.deepEqual(value, { ports: { Ubuntu: 40123 }, version: 2, shareLogin: false, profile: 'web', autoConnect: ['Ubuntu'], workspaceOrder: [], sshHosts: [] });
 });
 
 /** A credentials provider shaped like dsh-credentials-local (serialized modifyRecord). */
@@ -395,6 +715,7 @@ async function startAgent(input, output, wslStore) {
     inject(_names, callback) {
       callback({ credentials: wslStore, effect: (factory) => disposers.push(factory()) });
     },
+    get: (name) => (name === 'credentials' ? wslStore : undefined),
   };
   serve(ctx, input, output, { shareLogin: true });
   return () => disposers.forEach((dispose) => dispose());
@@ -433,7 +754,7 @@ await test('shared login: WSL reads and refreshes the Windows store under its lo
 
   const dispose = await startAgent(toWsl, toWindows, wslStore);
   const hello = await session.hello.promise;
-  assert.equal(hello.agent, 1);
+  assert.equal(hello.agent, 2);
 
   // Reads come from Windows; the WSL-only cookie secret stays local.
   assert.deepEqual(await wslStore.resolve('DEEPSEEK_API_KEY'), { value: 'sk-windows', source: 'windows' });
@@ -474,6 +795,16 @@ await test('shared login: WSL reads and refreshes the Windows store under its lo
     throw new Error('refresh failed');
   }), /refresh failed/);
   assert.equal(windowsStore.records.get('counter/x').payload.n, 3);
+
+  // Model sync reads one API key from the remote dsh through its agent.
+  connection.session = session;
+  connection.state = 'connected';
+  session.agent = hello;
+  assert.equal(await connection.resolveCredential('DEEPSEEK_API_KEY'), 'sk-windows', 'as the remote dsh resolves it');
+  assert.equal(await connection.resolveCredential('UNSET_KEY'), undefined);
+  await assert.rejects(connection.resolveCredential('bad name'), /invalid credential reference/);
+  session.agent = { agent: 1 };
+  await assert.rejects(connection.resolveCredential('DEEPSEEK_API_KEY'), /too old/, 'an old agent is asked to reconnect');
   dispose();
 });
 

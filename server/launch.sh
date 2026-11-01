@@ -1,9 +1,10 @@
 #!/bin/sh
-# Started by the Windows DeepSeek Harness through
+# Started by the Windows DeepSeek Harness through wsl.exe or ssh (same argv):
 #   wsl.exe -d <distro> --cd ~ -e /bin/sh launch.sh probe
 #   wsl.exe -d <distro> --cd ~ -e /bin/sh launch.sh run <profile> <share-login 0|1> <marker>
 #   wsl.exe -d <distro> -e /bin/sh launch.sh kill <pid> <start time>
-# Like Codex's WSL remote connection, the user's own CLI is found on the PATH of
+#   ssh -T … <host> "'/bin/sh' 'launch.sh' 'run' …"
+# Like Codex's remote connections, the user's own CLI is found on the PATH of
 # their login shell, so nvm, ~/.profile and ~/.zshrc setups all apply.
 here=$(dirname "$0")
 s=$(getent passwd "$(id -un)" 2>/dev/null | cut -d: -f7)
@@ -44,6 +45,11 @@ run)
   export DSH_WSL_REMOTE_SHARE_LOGIN="$3"
   export DSH_WSL_REMOTE_OVERLAY="$here/overlay.yml"
   export DSH_WSL_REMOTE_PROFILE="$profile"
+  # pnpm's "update available" check is a fire-and-forget registry request; when
+  # it hangs, pnpm stays alive after "Done" and the plugin manager waits for its
+  # 10-minute silence bound, then rolls the install back. dsh's pnpm runs inherit
+  # this environment, so switch the check off for them.
+  export pnpm_config_update_notifier=false npm_config_update_notifier=false
   # Make this process the leader of its own process group (wsl.exe normally
   # already does). Every exec below keeps the pid, so dsh is that leader and
   # its tools, MCP servers and terminals start in its group unless they make
@@ -54,6 +60,9 @@ run)
   printf '%s:%s:%s\n' "$marker" "$$" "$(start_time $$)" >&2
   # fd 3 -> Windows, fd 4 <- Windows; dsh's own stdout and stdin stay off the pipe.
   exec 3>&1 4<&0 1>&2 0</dev/null
+  # Everything before this line on the pipe (an SSH login shell's banner, rc
+  # files that echo) is discarded by Windows; mux frames start right after it.
+  printf '\n__DSH_REMOTE_MUX_V1__\n' >&3
   exec "$s" -ilc 'exec dsh --patch "$DSH_WSL_REMOTE_OVERLAY" --profile "$DSH_WSL_REMOTE_PROFILE" --no-open --port 0'
   ;;
 kill)

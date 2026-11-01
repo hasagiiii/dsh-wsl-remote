@@ -8,6 +8,7 @@
 - **在 WSL dsh 自己的界面里打开**：也可以通过本机回环中继，在侧边栏或浏览器里打开 WSL dsh 的原生界面。
 - **共享登录状态**（可选）：WSL 的 dsh 直接使用 Windows 的凭据存储。
 - **`dsh-harness` 命令**：在 WSL 终端里运行 `dsh-harness .`，把当前目录作为 WSL 工作区在 DeepSeek Harness 中打开，用法与 `code .` 相同。
+- **SSH 远程主机**：用法与 WSL 完全一致。在 设置 → 通用 → **SSH 远程主机** 中添加 `user@host`、`host:端口` 或 `~/.ssh/config` 里的 Host，连接后服务器上你自己的 `dsh` 的工作区和会话同样合并到这个窗口；添加工作区时选「SSH」。见下文 [SSH 远程主机](#ssh-远程主机)。
 
 | | Windows 工作区 | WSL 工作区 |
 |---|---|---|
@@ -75,17 +76,35 @@ WSL 中只会留下 `~/.dsh-wsl-remote` 和 `~/.local/bin/dsh-harness`，可以�
 
 之前版本添加的 `\\wsl.localhost\…` 工作区会与 WSL 里同一文件夹的工作区合并成一行，并显示为 Linux 路径；之后新建的会话都在 WSL 的 dsh 里运行，以前在 Windows 上运行过的旧会话仍然留在原处。
 
+已成功连接过的工作区和会话侧栏信息会缓存在 Windows 的 DSH home 下的 `wsl-remote-cache.json`。下次启动先显示上次的工作区、会话标题和顺序所需的标识，保留工作区展开状态，再在后台连接 WSL 并更新列表；连接失败时仍可看到上次列表。首次升级需要成功连接一次以建立缓存，之前已丢失的展开状态需要手动展开一次。缓存只保存侧栏元数据，不包含会话正文、输入队列或凭据；远程删除的项目在连接成功后从缓存移除。
+
 ### 插件：哪边装了什么
 
-WSL 会话的 Agent（工具、技能、MCP 服务、模型提供方）用的是 WSL dsh 里装的插件；这个窗口的界面和它自己的插件管理页始终是 Windows 的。在 设置 → 通用设置 里，已连接发行版旁边的 **WSL 插件** 会列出那个 dsh 的插件，并逐个标注：
+打开侧边栏的 **插件** 页面，顶部可切换 **Windows / WSL** 标签。Windows 标签保留本机插件列表和管理功能；WSL 标签选择发行版后，只显示该发行版安装的插件，并显示当前 profile。未连接的发行版会显示连接按钮，不会沿用另一台主机的列表。通用设置只负责 WSL 连接设置，不再放插件管理面板。
+
+WSL 会话的 Agent（工具、技能、MCP 服务、模型提供方）用 WSL dsh 的插件。WSL 标签里还会标注与 Windows 安装的差别：
 
 - **仅 WSL**：WSL 会话有，Windows 会话没有；
 - **Windows 为 x.y.z**：两边都装了，但版本不同；
 - **Windows 也已安装**：两边都装了，版本相同。
 
-下面的 **仅装在 Windows 的插件** 列出 WSL 会话没有的插件。在这个面板里可以启用、停用、卸载 WSL 的插件，按包名或安装地址安装，也可以把仅 Windows 的插件 **装到 WSL**（从 Windows 文件夹链接安装的插件，会通过 `/mnt/<盘符>/…` 链接到同一份文件）。这些操作都由 WSL dsh 自己的插件管理器执行；需要重启才能生效时，面板会提供"重启 WSL 中的 dsh"。**在 WSL dsh 自己的界面中管理** 会打开它完整的插件页面。
+WSL 标签支持刷新、启用、停用、卸载，以及按包名或 WSL 安装地址安装插件。所有操作都带着选中的发行版名称，交给那个 WSL dsh 的插件管理器执行；Windows 标签仍操作 Windows profile。需要重启才能生效时，会提供“重启 WSL 中的 dsh”。还可以打开 WSL dsh 自己的完整界面。
 
 安装在后台进行：面板实时显示当前阶段、已用时间和 pnpm 输出；**取消安装** 会通过 WSL 的插件管理器停止安装并还原配置。pnpm 超过一分钟没有输出时，面板会提示可能卡住并提供取消；窗口不会因为安装而一直等待。在一个窗口里开始的安装，换个窗口或刷新后仍能接着看到。
+
+同一标签页列表下方的 **同步插件** 可以把插件从任意一台主机同步到另一台：Windows、WSL 发行版、SSH 主机，方向任选。选好**从**和**到**，点**比较**，然后点某个插件行上的**安装** / **更新** / **启用**按钮单独同步它，或勾选多个后点**同步所选**。同步进行中再同步同一对主机间的其他插件，会排到当前同步的末尾。每个插件会标出它在目标主机上的情况（缺少、版本不同、已停用、已一致），然后由目标主机自己的插件管理器逐个安装，实时显示输出，可以**停止同步**；已安装但停用的会被启用。从 npm 安装的插件会固定为来源主机的版本；git 来源保持原样；从 Windows 文件夹安装的插件在 WSL 中通过 `/mnt/<盘符>` 安装，SSH 主机访问不到这个文件夹。目标主机访问不到插件文件夹时，如果这个文件夹是某个 git 仓库的根目录、且当前提交已推送到远程分支，就改为从 git 安装，并固定到这个提交（本地有未推送的提交时，用最新一个已推送的提交）；面板会显示仓库和提交，并说明未推送的提交、未提交的修改不包含在内。其他情况面板会说明无法同步的原因。只有目标主机有的插件会列出来并保留，不会删除任何插件。开始同步时 Host 会重新比较一次，窗口只能选择插件名，不能指定安装地址。插件需要重启才能加载时，面板会提示。
+
+### 模型：切换主机与同步配置
+
+打开 **设置 → 模型**，顶部可切换 **Windows / WSL**。Windows 使用本机模型编辑器；WSL 选择发行版后，可以配置供应商、API Key、接口地址和模型列表，保存操作交给所选发行版。未连接时先点**连接**。
+
+每个供应商都有自己的同步按钮：Windows 标签下点**同步到 WSL**，WSL 标签下点**同步到 Windows**。预览只包含该供应商的配置，点**确认同步**后写入；其他供应商不受影响。保留目标端独有的字段和模型，同名配置采用来源端的值。预览后目标配置有变化时会拒绝旧预览，需要重新预览。
+
+对于插件提供的供应商，目标端缺少插件时可点**安装供应商插件**，已有但停用时可点**启用供应商插件**。安装使用来源端实际安装包的来源，支持两个方向，显示进度和日志，并可取消。完成后重新预览配置，仍需单独确认同步。安装包归属不明确、平台不兼容或本地来源路径无法转换时会说明原因。WSL 原生 Linux 目录中的本地插件需先发布或放到两端可访问的 Windows 目录。需要重启才能生效的插件会显示提示。
+
+同步时也可以一并复制供应商的 API Key。预览会在**同时复制 API Key** 下列出目标端缺少、或值不同（会标明将被覆盖）的 Key，默认勾选；取消勾选则只同步配置。目标端已有且值相同的 Key 不会改动。Key 的值在 Windows Host 进程内从来源主机的凭据存储读出，再通过目标端的 `credentials/set` 写入：预览、结果、日志和窗口都拿不到这个值，出错时只显示 Key 的名称。远程主机上的值由其 dsh 内的 agent 读取，所以本版本之前建立的连接需要先重新连接。无法复制的 Key 仍会列为缺少，可在目标标签中补填。开启「共享登录状态」时，两端已经共用 Windows 的凭据存储，在任一端修改共享 Key 都会影响另一端。
+
+更新本插件后，在插件管理中停用再启用 `@local/dsh-wsl-remote`，然后刷新窗口，即可加载新的模型页面，无需重启应用。
 
 ### 共享登录状态
 
@@ -108,6 +127,25 @@ dsh-harness --focus    # 只把 DeepSeek Harness 窗口切到前台
 ```
 
 它通过 WSL 互操作启动 Windows 上的 DeepSeek Harness（已在运行则切到前台），并把目录交给插件。目录通过 `<DSH 主目录>\wsl-remote\requests` 中的请求文件传递，WSL 一侧不打开任何端口。
+
+### SSH 远程主机
+
+SSH 主机的用法与 WSL 发行版一致，只是主机需要你手动添加：
+
+1. 在服务器上安装 dsh（与 WSL 相同：`npm i -g @deepseek-ai/dsh`，版本须与 Windows 一致）。
+2. 打开 设置 → 通用 → **SSH 远程主机**，输入 `user@host`、`host:端口` 或 `~/.ssh/config` 里的 `Host` 别名后点**添加**；`~/.ssh/config` 中的具体主机也会列成一键添加的按钮。
+3. 点**连接**。之后与 WSL 完全相同：首次连接部署 agent 到服务器的 `~/.dsh-wsl-remote/agent/<版本>`，检查 `dsh --version`，启动 `dsh --profile web`；工作区和会话合并到这个窗口，侧边栏显示 **SSH · <主机>** 标记；插件页和模型页的远程标签里可以选 SSH 主机；可共享登录状态；自动重连；断开时清理服务器上的进程组。
+4. 添加工作区时选「SSH」，选主机后在服务器的 Linux 文件系统里挑文件夹。
+
+连接使用 Windows 自带的 OpenSSH（`C:\Windows\System32\OpenSSH\ssh.exe`），沿用 `~/.ssh/config`、密钥和 ssh-agent。所有数据都走这一条 SSH 会话的 stdio，服务器不需要开放额外端口，也不使用端口转发。连接以非交互方式进行（`BatchMode=yes`），**不能输入密码或确认主机密钥**：请先配置密钥登录，并在 PowerShell 里手动 `ssh <主机>` 一次接受主机密钥。认证、主机密钥或网络失败时，设置页会说明原因。
+
+与 WSL 的区别：
+
+- 没有 `dsh-harness` 命令（它依赖 WSL 互操作）。
+- 「在应用中打开」不支持 SSH 上的文件：Windows 没有对应路径。
+- Windows 本地文件夹（`link:F:/…`）安装的插件不能直接装到 SSH 主机（服务器看不到 Windows 磁盘），会改用包名从 npm 安装；模型页的「安装供应商插件」对这类插件会说明原因。
+
+移除 SSH 主机后，服务器上只留下 `~/.dsh-wsl-remote`，可用 `rm -rf ~/.dsh-wsl-remote` 清理。
 
 ## 工作原理
 
@@ -158,10 +196,11 @@ Codex 的窗口在每个请求里都带 `hostId`。DeepSeek Harness 的客户端
 - `lib/bridge/routes.js`：WSL 会话的插件 HTTP 路由和 WebSocket，交给 WSL dsh 处理。
 - `lib/bridge/merge.js`：纯函数部分，包括从调用和请求中提取 ID、工作区合并、判断 Linux 路径属于哪个发行版。
 - `lib/bridge/host-client.js`：用 DeepSeek Harness 官方客户端包组装的 WSL dsh 客户端。
-- `lib/remote.js`：一个远程连接，负责部署、版本检查、启动、本机回环中继、应答凭据请求，以及带退避的自动重连。
-- `server/launch.sh`、`server/agent.mjs`：通过登录 Shell 启动 `dsh`；agent 是通过 `dsh --patch` 加载的 Cordis 插件，只在被 Windows Host 启动时运行。
+- `lib/remote.js`：一个远程连接（WSL 或 SSH），负责部署、版本检查、启动、本机回环中继、应答凭据请求，以及带退避的自动重连。
+- `lib/transport.js`：在远程主机上运行 Linux 命令：WSL 用 `wsl.exe -d`，SSH 用 `ssh -T -o BatchMode=yes`（参数逐个加单引号）；以及 `~/.ssh/config` 解析。
+- `server/launch.sh`、`server/agent.mjs`：通过登录 Shell 启动 `dsh`；agent 是通过 `dsh --patch` 加载的 Cordis 插件，只在被 Windows Host 启动时运行。管道上在 mux 帧之前先输出一行标记，SSH 登录 Shell 的欢迎信息会被丢弃。
 - `server/dsh-harness.sh`、`lib/requests.js`：`dsh-harness` 命令。
-- `lib/linux-fs.js`：WSL 文件夹选择器，以及从 `\\wsl.localhost` 路径中读出发行版和 Linux 路径。
+- `lib/linux-fs.js`：WSL / SSH 文件夹选择器，以及选择器地址（`\\wsl.localhost\…`、`ssh://<主机>/…`）与主机和 Linux 路径之间的转换。
 
 ## 限制
 
@@ -206,3 +245,11 @@ $env:DSH_HOME = $h; $env:DSH_TELEMETRY_DISABLED = '1'; $env:DSH_CLIENT_VERSION =
 ```
 
 `server/agent.mjs`、`server/launch.sh`、`server/dsh-harness.sh` 或 `lib/mux.js` 变化时，请递增 `lib/remote.js` 中的 `AGENT_VERSION`。
+
+SSH 路径的测试不需要真实服务器：`test/fake-ssh.mjs` 接收 ssh 的真实参数，先在 stdout 打印登录欢迎信息，再把命令字符串交给一个 WSL 发行版的 Shell 执行：
+
+```powershell
+& $dsh --test --test-isolation=none test/ssh.mjs test/client-ssh.mjs     # 参数拼接、地址、~/.ssh/config、欢迎信息跳过、设置、路由、界面
+$env:DSH_FAKE_SSH_DISTRO = 'Ubuntu-26.04'
+& $dsh --import ./test/stub-cordis.mjs test/ssh-remote.mjs              # 经 SSH 代码路径部署、启动、中继、列目录、断开后清理进程组
+```
