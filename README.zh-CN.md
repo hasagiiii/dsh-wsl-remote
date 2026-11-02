@@ -284,3 +284,7 @@ SSH 路径的测试不需要真实服务器：`test/fake-ssh.mjs` 接收 ssh 的
 $env:DSH_FAKE_SSH_DISTRO = 'Ubuntu-26.04'
 & $dsh --import ./test/stub-cordis.mjs test/ssh-remote.mjs              # 经 SSH 代码路径部署、启动、中继、列目录、断开后清理进程组
 ```
+
+## Community & Links
+
+[LINUX DO](https://linux.do)

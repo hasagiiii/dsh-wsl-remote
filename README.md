@@ -284,3 +284,7 @@ The SSH path is tested without a real server: `test/fake-ssh.mjs` takes ssh's re
 $env:DSH_FAKE_SSH_DISTRO = 'Ubuntu-26.04'
 & $dsh --import ./test/stub-cordis.mjs test/ssh-remote.mjs              # deploy, launch, relay, folder listing and process-group cleanup over the SSH code path
 ```
+
+## Community & Links
+
+[LINUX DO](https://linux.do)
