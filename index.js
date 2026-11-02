@@ -27,7 +27,7 @@ import { MIN_DSH_VERSION } from './lib/version.js';
 import { isDistro, isProfile, loadSettings, writeSettings } from './lib/state.js';
 import { watchRequests } from './lib/requests.js';
 import { createLinuxDirectory, listLinuxDirectory, parseOsRelease, remoteHome, toRemoteAddress, toUncPath } from './lib/linux-fs.js';
-import { hostKind, isSshDest, isSshHost, readSshConfigHosts, runOn, sshDestOf, sshHostId } from './lib/transport.js';
+import { hostKind, hostLabel, isSshDest, isSshHost, readSshConfigHosts, runOn, sshDestOf, sshHostId } from './lib/transport.js';
 import { WslBridge, wrapFetchRoutes, wrapGateway } from './lib/bridge/bridge.js';
 import { RouteForwarder } from './lib/bridge/routes.js';
 import { loadBridgeCache, writeBridgeCache } from './lib/bridge/cache.js';
@@ -148,6 +148,9 @@ export default class WslRemoteService extends Service {
         },
         loadOrder: () => this.settings.workspaceOrder ?? [],
         saveOrder: (order) => this.save({ ...this.settings, workspaceOrder: order }),
+        // Who holds a session's write lock on a host, for a clear "in use" message.
+        lockHolder: (distro, sessionId) => this.connections.get(distro)?.sessionLockHolder(sessionId),
+        label: (distro) => hostLabel(distro),
       },
       windows: {
         knows: async (sessionId) => {
@@ -391,6 +394,11 @@ export default class WslRemoteService extends Service {
           ...(entry.kind === 'wsl' || this.connections.get(entry.name)?.facts ? await this.distroInfo(entry.name).catch(() => ({})) : {}),
         })));
         return { distros, workspaces: this.bridge.workspaceHosts() };
+      });
+      // The most recent remote "session in use" refusal and who held the lock (kept a minute).
+      route('session-holder', ['POST'], async () => {
+        const last = this.bridge.lastWriterHeld;
+        return { holder: last !== undefined && Date.now() - last.at < 60000 ? last : null };
       });
       // One distribution's own model catalog, for its sessions' model picker.
       route('models/rpc', ['POST'], async (request) => {

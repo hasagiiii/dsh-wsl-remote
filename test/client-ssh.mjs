@@ -7,7 +7,7 @@ import test from 'node:test';
  * Load client.js with a tiny hook host (state and effects kept per component
  * type) and collect the components it registers.
  */
-function load(reply) {
+function load(reply, options = {}) {
   const registered = new Map();
   const requests = [];
   const frames = new Map();
@@ -28,9 +28,15 @@ function load(reply) {
       const i = cursor++;
       const owner = frame;
       const previous = owner[i];
-      if (previous === undefined || deps === undefined || deps.some((value, k) => value !== previous[k])) {
-        owner[i] = deps ?? [];
-        pending.push(fn);
+      if (previous === undefined || deps === undefined || deps.some((value, k) => value !== previous.deps[k])) {
+        // As React does: the previous run's cleanup goes first, then the new effect.
+        const slot = { deps: deps ?? [], cleanup: undefined };
+        owner[i] = slot;
+        pending.push(() => {
+          previous?.cleanup?.();
+          const cleanup = fn();
+          if (typeof cleanup === 'function') slot.cleanup = cleanup;
+        });
       }
     },
     useLayoutEffect() {}, useId: () => 'id',
@@ -55,7 +61,7 @@ function load(reply) {
     document: { head: { appendChild() {} }, createElement: () => ({ remove() {} }), querySelectorAll: () => [], body: {} },
     MutationObserver: class { observe() {} disconnect() {} },
     requestAnimationFrame: () => 1, cancelAnimationFrame() {},
-    console, AbortController, setInterval: () => 1, clearInterval() {}, setTimeout: () => 1, clearTimeout() {},
+    console, AbortController, setInterval: () => 1, clearInterval() {}, setTimeout: options.setTimeout ?? (() => 1), clearTimeout() {},
     fetch: async (path, init = {}) => {
       const payload = init.body ? JSON.parse(init.body) : undefined;
       requests.push({ path, payload });
@@ -63,9 +69,10 @@ function load(reply) {
     },
   });
   var plugin;
+  const locale = { register: () => () => {}, bind: () => (key) => key, subscribe: () => () => {}, getSnapshot: () => 0, translate: (ns, key) => `native:${ns}.${key}` };
   plugin.factory((name) => (name === 'react' ? React : name === 'react-dom' ? {} : name === '@deepseek-ai/dsh-client-ui-primitives' ? primitives : {})).apply({
-    inject() {}, effect() {}, get: () => undefined,
-    locale: { register: () => () => {}, bind: () => (key) => key, subscribe: () => () => {}, getSnapshot: () => 0, translate: () => '' },
+    inject() {}, effect: (start, label) => { if (options.runEffects?.includes(label)) start(); }, get: () => undefined,
+    locale,
     slots: { inject: (_name, start) => start(), register: (options, component) => { registered.set(options.id ?? options.name, component); return () => {}; }, entries: () => [], subscribe: () => () => {} },
   });
   const expand = (node) => {
@@ -104,7 +111,7 @@ function load(reply) {
     assert.ok(found, `button ${label} is present`);
     return found;
   };
-  return { registered, requests, render, text, all, button, React, flush };
+  return { registered, requests, render, text, all, button, React, flush, locale };
 }
 
 const status = {
@@ -256,4 +263,111 @@ test('Plugin sync panel: a row syncs just its plugin; while running, other rows 
   assert.deepEqual(syncs(), [['a'], ['b']]);
   assert.match(tag('b'), /sync\.item\.pending/);
   assert.equal(f.button(tree, 'sync.run').props.disabled, true, 'queued plugins are not offered again for batch sync');
+});
+
+test('Plugin sync panel: the comparison below is made again after a sync, even when the page re-renders first', async () => {
+  // In React, setRun() re-renders before the new plan arrives, which runs the
+  // poll effect's cleanup. The new plan must still replace the old one.
+  let installed = false;
+  let releasePlan;
+  const before = { source: null, target: 'ssh:me@dev', targetOnly: [], rows: [{ name: 'dsh-ops', version: '0.4.4', state: 'missing', action: 'install', spec: 'dsh-ops@0.4.4' }] };
+  const after = { source: null, target: 'ssh:me@dev', targetOnly: [], rows: [{ name: 'dsh-ops', version: '0.4.4', targetVersion: '0.4.4', state: 'same' }] };
+  let run = { id: 'run-1', source: null, target: 'ssh:me@dev', status: 'running', elapsedMs: 0, items: [{ name: 'dsh-ops', action: 'install', status: 'running' }] };
+  const hosts = { ...status, distros: [{ name: 'ssh:me@dev', state: 'connected' }] };
+  const timers = [];
+  const f = load((path) => {
+    if (path.endsWith('/sync-plan')) return installed ? new Promise((resolve) => { releasePlan = () => resolve(after); }) : before;
+    if (path.endsWith('/plugins/sync')) return { run };
+    if (path.endsWith('/sync-status')) return { run: installed ? run : null };
+    if (path.endsWith('/plugins')) return { distro: 'ssh:me@dev', plugins: [], windowsOnly: [] };
+    if (path.endsWith('/install-status')) return { job: null };
+    return hosts;
+  }, { setTimeout: (fn) => { timers.push(fn); return timers.length; } });
+  const element = f.React.createElement(f.registered.get('wsl-plugins'), {});
+  await f.render(element);
+  await f.flush();
+  let tree = await f.render(element);
+  f.button(tree, 'sync.load').props.onClick();
+  await f.flush();
+  tree = await f.render(element);
+  f.all(tree).find((node) => node.type === 'button' && node.props['data-lwr-sync-one'] === 'dsh-ops').props.onClick();
+  await f.flush();
+  tree = await f.render(element);
+  installed = true;
+  run = { ...run, status: 'done', items: [{ name: 'dsh-ops', action: 'install', status: 'done' }] };
+  // The poll sees the run done; the page re-renders while the new plan is still on its way.
+  const polls = timers.splice(0).map((fire) => fire());
+  for (let round = 0; round < 3; round++) {
+    await f.flush();
+    tree = await f.render(element);
+  }
+  assert.equal(typeof releasePlan, 'function', 'a new comparison was requested');
+  // Until it answers, the row neither goes back to "Install" nor claims success.
+  const waiting = f.all(tree).find((node) => node.props?.['data-lwr-sync-row'] === 'dsh-ops');
+  assert.match(f.text(f.all(waiting).find((node) => node.props?.['data-lwr-sync-status'] === 'dsh-ops')), /sync\.item\.confirming/, 'the row says the result is being confirmed');
+  assert.equal(f.all(waiting).some((node) => node.props?.['data-lwr-sync-one'] === 'dsh-ops'), false, 'no Install button while confirming');
+  assert.equal(f.all(waiting).find((node) => node.type === 'input').props.disabled, true);
+  releasePlan();
+  await Promise.all(polls);
+  for (let round = 0; round < 3; round++) {
+    await f.flush();
+    tree = await f.render(element);
+  }
+  const row = f.all(tree).find((node) => node.props?.['data-lwr-sync-row'] === 'dsh-ops');
+  assert.match(f.text(row), /sync\.state\.same/, 'the row now says in sync');
+  assert.equal(f.all(row).some((node) => node.props?.['data-lwr-sync-one'] === 'dsh-ops'), false, 'no install button is left');
+});
+
+test('Plugin sync panel: when a sync ends, its own comparison is made again (no stale "install" left)', async () => {
+  let installed = false;
+  const before = { source: null, target: 'ssh:me@dev', targetOnly: [], rows: [{ name: 'dsh-ops', version: '0.4.4', state: 'missing', action: 'install', spec: 'dsh-ops@0.4.4' }] };
+  const after = { source: null, target: 'ssh:me@dev', targetOnly: [], rows: [{ name: 'dsh-ops', version: '0.4.4', targetVersion: '0.4.4', state: 'same' }] };
+  let run = { id: 'run-1', source: null, target: 'ssh:me@dev', status: 'running', elapsedMs: 0, items: [{ name: 'dsh-ops', action: 'install', status: 'running' }] };
+  const hosts = { ...status, distros: [{ name: 'ssh:me@dev', state: 'connected' }] };
+  const timers = [];
+  const f = load((path) => {
+    if (path.endsWith('/sync-plan')) return installed ? after : before;
+    if (path.endsWith('/plugins/sync')) return { run };
+    if (path.endsWith('/sync-status')) return { run: installed ? run : null };
+    if (path.endsWith('/plugins')) return { distro: 'ssh:me@dev', plugins: [], windowsOnly: [] };
+    if (path.endsWith('/install-status')) return { job: null };
+    return hosts;
+  }, { setTimeout: (fn) => { timers.push(fn); return timers.length; } });
+  const element = f.React.createElement(f.registered.get('wsl-plugins'), {});
+  await f.render(element);
+  await f.flush();
+  let tree = await f.render(element);
+  f.button(tree, 'sync.load').props.onClick();
+  await f.flush();
+  tree = await f.render(element);
+  f.all(tree).find((node) => node.type === 'button' && node.props['data-lwr-sync-one'] === 'dsh-ops').props.onClick();
+  await f.flush();
+  tree = await f.render(element);
+  installed = true;
+  run = { ...run, status: 'done', items: [{ name: 'dsh-ops', action: 'install', status: 'done' }] };
+  for (let round = 0; round < 4; round++) {
+    for (const fire of timers.splice(0)) await fire();
+    await f.flush();
+    tree = await f.render(element);
+  }
+  const row = f.all(tree).find((node) => node.props?.['data-lwr-sync-row'] === 'dsh-ops');
+  assert.match(f.text(row), /sync\.state\.same/, 'the row now says in sync');
+  assert.equal(f.all(row).some((node) => node.props?.['data-lwr-sync-one'] === 'dsh-ops'), false, 'no install button is left');
+  assert.match(f.text(tree), /sync\.done/);
+});
+
+test('"Session in use" on a remote host names the dsh holding the lock; other text stays native', async () => {
+  let holder = null;
+  const f = load((path) => {
+    if (path.endsWith('/session-holder')) return { holder };
+    return status;
+  }, { runEffects: ['wsl-remote: remote session-in-use message'] });
+  const ask = () => f.locale.translate('conversation', 'error.sessionInUse');
+  assert.equal(ask(), 'native:conversation.error.sessionInUse', 'nothing known yet: the page\'s own words');
+  holder = { sessionId: 's1', host: 'ssh:bwg', hostLabel: 'SSH: bwg', holder: 'dsh (pid 4184571, port 3080, https://dsh.opentk.ai)' };
+  await f.flush();
+  await f.flush();
+  assert.equal(ask(), 'session.heldRemote', 'the holder found by the Host is described');
+  assert.ok(f.requests.some((request) => request.path.endsWith('/session-holder')));
+  assert.equal(f.locale.translate('conversation', 'queue.steer'), 'native:conversation.queue.steer');
 });

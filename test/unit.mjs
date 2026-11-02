@@ -264,6 +264,36 @@ await test('bridge: a WSL workspace just added is routable before its follow str
   assert.deepEqual(bridge.workspaceHosts(), { l9: 'Ubuntu' });
 });
 
+await test('bridge: a remote "session in use" names the other dsh that holds the lock', async () => {
+  const { WslBridge, describeHolder } = await import('../lib/bridge/bridge.js');
+  const holder = { pid: '4060384', command: 'node /home/z/.nvm/bin/dsh --profile web --patch p.yml --no-open --host 127.0.0.1 --port 3080 --public-url https://dsh.example' };
+  assert.equal(describeHolder(holder), 'dsh (pid 4060384, port 3080, https://dsh.example, profile web)');
+  assert.equal(describeHolder({ pid: '7', command: 'node dsh --port 0' }), 'dsh (pid 7)', 'an ephemeral port says nothing');
+  const asked = [];
+  const bridge = new WslBridge({
+    logger: { info() {}, warn() {} },
+    hosts: {
+      distros: () => ['ssh:bwg'], connected: () => true, url: () => 'u', ensure: async () => {}, subscribe: () => () => {}, loadOrder: () => [], saveOrder() {},
+      lockHolder: async (distro, sessionId) => { asked.push([distro, sessionId]); return sessionId === 'busy' ? holder : undefined; },
+      label: () => 'SSH: bwg',
+    },
+    windows: { knows: async () => false, workspaces: () => ({ items: [], archivedSessionIds: [], pinnedSessionIds: [] }) },
+  });
+  const refuse = (sessionId) => ({ ok: false, error: { code: 'session/writer-held', message: 'Session already owned', details: { sessionId } } });
+  bridge.client = async () => ({ call: async (_endpoint, { args }) => refuse(args.sessionId) });
+  const held = await bridge.forward('ssh:bwg', 'session/prompt', { sessionId: 'busy' }, undefined, true);
+  assert.equal(held.error.code, 'session/writer-held', 'the page still recognizes the code');
+  assert.match(held.error.message, /pid 4060384, port 3080, https:\/\/dsh\.example.*SSH: bwg/);
+  assert.deepEqual([held.error.details.sessionId, held.error.details.host, held.error.details.holderPid], ['busy', 'ssh:bwg', '4060384']);
+  assert.deepEqual(asked, [['ssh:bwg', 'busy']]);
+  assert.equal(bridge.lastWriterHeld.holder, describeHolder(holder), 'the window can ask who it was');
+  const unknown = await bridge.forward('ssh:bwg', 'session/prompt', { sessionId: 'other' }, undefined, true);
+  assert.match(unknown.error.message, /another dsh process on SSH: bwg/);
+  assert.equal(unknown.error.details.holderPid, undefined);
+  bridge.client = async () => ({ call: async () => ({ ok: false, error: { code: 'session/not-found', message: 'gone', details: {} } }) });
+  assert.equal((await bridge.forward('ssh:bwg', 'session/prompt', { sessionId: 'x' }, undefined, true)).error.message, 'gone', 'other errors pass through unchanged');
+});
+
 // A bounded wait makes a leaked stream an assertion failure, not a hung unit run.
 async function within(promise, message) {
   let timer;

@@ -184,6 +184,8 @@ window.__ModuleLoader__.load({
         'badge.titleSshNoOs': 'SSH 工作区 · {distro} · {state}',
         'plugins.hostTab': '远程主机',
         'sync.title': '同步插件',
+        'session.heldRemote': '这个会话正在 {host} 上的另一个 dsh 里打开着：{holder}。两边共用 {host} 的 ~/.dsh，同一时间只能有一个写入。请在那边关闭这个会话（或重启那个 dsh）后再发送；历史仍可在这里查看。',
+        'session.heldUnknown': '另一个 dsh 进程',
         'sync.desc': '把一台主机上用户安装的插件装到另一台主机（版本与来源一致），用目标主机自己的插件管理器逐个安装。目标主机上多出来的插件不会被删除。',
         'sync.from': '从',
         'sync.to': '到',
@@ -223,6 +225,7 @@ window.__ModuleLoader__.load({
         'sync.item.failed': '失败',
         'sync.item.cancelled': '已取消',
         'sync.item.skipped': '已跳过',
+        'sync.item.confirming': '确认安装结果…',
         'sync.done': '插件同步完成。',
         'sync.failed': '部分插件同步失败，详见上方。',
         'sync.restartRemote': '目标主机上的 dsh 需要重启才能加载这些插件。',
@@ -404,6 +407,8 @@ window.__ModuleLoader__.load({
         'badge.titleSshNoOs': 'SSH workspace · {distro} · {state}',
         'plugins.hostTab': 'Remote',
         'sync.title': 'Sync plugins',
+        'session.heldRemote': 'This session is open in another dsh on {host}: {holder}. Both share the ~/.dsh of {host}, and only one can write to a session at a time. Close it there (or restart that dsh), then send again; its history stays readable here.',
+        'session.heldUnknown': 'another dsh process',
         'sync.desc': 'Install the plugins you added on one host on another host, at the same version and from the same source, one by one through the target’s own plugin manager. Plugins only the target has are left alone.',
         'sync.from': 'From',
         'sync.to': 'To',
@@ -443,6 +448,7 @@ window.__ModuleLoader__.load({
         'sync.item.failed': 'failed',
         'sync.item.cancelled': 'cancelled',
         'sync.item.skipped': 'skipped',
+        'sync.item.confirming': 'confirming result…',
         'sync.done': 'Plugins synced.',
         'sync.failed': 'Some plugins did not sync; see above.',
         'sync.restartRemote': 'The dsh on the target needs a restart to load these plugins.',
@@ -1990,10 +1996,6 @@ window.__ModuleLoader__.load({
                 const value = await post('sync-status', { id: run.id });
                 if (stopped || !value.run) return;
                 setRun(value.run);
-                if (value.run.status !== 'running') {
-                  const next = await post('sync-plan', { source: value.run.source, target: value.run.target }).catch(() => undefined);
-                  if (!stopped && next) setPlan(next);
-                }
               } catch (error) {
                 if (!stopped) setFailure(error.message);
               }
@@ -2003,6 +2005,25 @@ window.__ModuleLoader__.load({
               clearTimeout(timer);
             };
           }, [run]);
+          // When a sync ends, compare again so the rows show what the target has now.
+          // Its own effect: setRun() above re-renders at once, and the poll's cleanup
+          // would otherwise drop this answer (rows stuck on "missing / Install").
+          // Until that comparison is back, the plugins of the run show "confirming"
+          // instead of falling back to the stale row and its Install button.
+          const settled = run !== undefined && run.status !== 'running' ? run.id : undefined;
+          const [confirmed, setConfirmed] = React.useState(undefined);
+          React.useEffect(() => {
+            if (settled === undefined) return undefined;
+            let current = true;
+            post('sync-plan', { source: run.source, target: run.target })
+              .then((next) => { if (current && next) setPlan(next); })
+              .catch(() => {})
+              .finally(() => { if (current) setConfirmed(settled); });
+            return () => {
+              current = false;
+            };
+          }, [settled]);
+          const confirming = settled !== undefined && confirmed !== settled;
           // One plugin or several; while a run between the same two hosts is
           // working, the Host queues them at its end.
           const start = async (names) => {
@@ -2026,10 +2047,12 @@ window.__ModuleLoader__.load({
           const running = run?.status === 'running';
           // A running run between the hosts on screen accepts more plugins; any other blocks syncing.
           const samePair = running && run.source === wire(source) && run.target === wire(target);
-          const blocked = busy || (running && (!samePair || Boolean(run.cancelRequested)));
+          const blocked = busy || confirming || (running && (!samePair || Boolean(run.cancelRequested)));
           // The latest item for a plugin in the running run: waiting, working or already done there.
-          const itemOf = (name) => (running ? run.items.findLast((item) => item.name === name) : undefined);
+          // After the run, until the new comparison is back, its items still speak for their rows.
+          const itemOf = (name) => (running || confirming ? run.items.findLast((item) => item.name === name) : undefined);
           const queued = (name) => ['pending', 'running', 'done'].includes(itemOf(name)?.status);
+          const itemText = (item) => (confirming && item.status === 'done' ? tr('sync.item.confirming') : tr(`sync.item.${item.status}`));
           const syncable = plan ? plan.rows.filter((row) => row.action !== undefined) : [];
           const pickedSyncable = picked.filter((name) => syncable.some((row) => row.name === name) && !queued(name));
           const toggle = (name) => setPicked((list) => (list.includes(name) ? list.filter((item) => item !== name) : [...list, name]));
@@ -2063,7 +2086,7 @@ window.__ModuleLoader__.load({
                     row.git.dirty ? ` ${tr('sync.git.dirty')}` : ''))),
               row.action && h('div', { className: 'lwr-actions' },
                 queued(row.name)
-                  ? h('span', { className: 'lwr-tag', 'data-lwr-sync-status': row.name }, tr(`sync.item.${itemOf(row.name).status}`))
+                  ? h('span', { className: 'lwr-tag', 'data-lwr-sync-status': row.name }, itemText(itemOf(row.name)))
                   : h('button', {
                     type: 'button',
                     className: 'lwr-button',
@@ -2157,6 +2180,42 @@ window.__ModuleLoader__.load({
 
         ctx.slots.inject('settings.general.item', () => ctx.slots.register({ name: 'settings.general.item', id: 'local-wsl-remote-connections', order: 30 }, ConnectionsRow));
         ctx.slots.inject('settings.general.item', () => ctx.slots.register({ name: 'settings.general.item', id: 'local-wsl-remote-share', order: 31 }, ShareRow));
+
+        // "Session in use" on a remote host: the chat page shows only its own
+        // fixed words for `session/writer-held`. When the Host found who holds
+        // the lock (another dsh on that host sharing its ~/.dsh), say so, the way
+        // Codex says "active elsewhere". Every other lookup is left unchanged.
+        let writerHolder;
+        const watchHolder = async () => {
+          try {
+            const value = await call('api/local-wsl-remote/session-holder', { method: 'POST', body: JSON.stringify({}) });
+            writerHolder = value?.holder ?? undefined;
+          } catch {
+            writerHolder = undefined;
+          }
+        };
+        {
+          const locale = Reflect.get(ctx.locale, Symbol.for('cordis.original')) ?? ctx.locale;
+          const original = locale.translate;
+          if (typeof original === 'function') ctx.effect(() => {
+            const own = Object.prototype.hasOwnProperty.call(locale, 'translate');
+            const previous = locale.translate;
+            const translate = function (ns, key, params) {
+              if (key === 'error.sessionInUse' && (ns === 'conversation' || ns === 'model')) {
+                // Look again for the next time; this one answers from what is known now.
+                watchHolder();
+                if (writerHolder !== undefined) return t('session.heldRemote', { host: writerHolder.hostLabel, holder: writerHolder.holder ?? t('session.heldUnknown') });
+              }
+              return previous.call(this, ns, key, params);
+            };
+            locale.translate = translate;
+            return () => {
+              if (locale.translate !== translate) return;
+              if (own) locale.translate = previous;
+              else delete locale.translate;
+            };
+          }, 'wsl-remote: remote session-in-use message');
+        }
 
         applyModels(ctx, { useT, useStatus, store });
         applyWorkspaces(ctx, { t, useT, call, store });
