@@ -2,26 +2,57 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Use WSL from DeepSeek Harness the way the Codex desktop app does. **Install it once, on Windows.** Each WSL distribution is a remote host running your own `dsh`, installed with `npm i -g @deepseek-ai/dsh`, and its workspaces and sessions are merged into the Windows window.
+Bring WSL and SSH remote hosts to DeepSeek Harness, the way the Codex desktop app supports them. **Install it once, on Windows.** Each WSL distribution and each SSH server is a remote host running your own `dsh`, installed with `npm i -g @deepseek-ai/dsh`, and its workspaces and sessions are merged into the Windows window.
 
 - **WSL workspaces**: choose "WSL" when adding a workspace and pick a folder in the Linux file system. Sessions in that workspace run in your own `dsh` inside WSL, with WSL's `~/.dsh` profile, models and plugins; commands, file edits and searches run in Linux under the sandbox you configured there. The session list, chat view, history, live output, questions and approvals are all in the same Windows window, beside the Windows sessions.
-- **Open the WSL dsh's own UI**: through a Windows loopback relay, in the sidebar or a browser.
-- **Shared sign-in** (optional): the WSL dsh uses the Windows credential store directly.
-- **`dsh-harness` command**: run `dsh-harness .` in a WSL terminal to open the current directory as a WSL workspace in DeepSeek Harness, like `code .`.
 - **SSH remote hosts**: used exactly like WSL. Add `user@host`, `host:port` or a `Host` from `~/.ssh/config` under Settings → General → **SSH remote hosts**; once connected, the workspaces and sessions of your own `dsh` on the server are merged into this window the same way, and "Add workspace" offers **SSH**. See [SSH remote hosts](#ssh-remote-hosts).
+- **Plugin management and sync**: the Plugins page switches between hosts, shows and manages what each host has installed, and copies plugins from one host to another.
+- **Model configuration and sync**: the Models page switches between hosts, edits each host's model providers, and copies a provider's configuration (optionally with its API key) to another host.
+- **Open the remote dsh's own UI**: through a Windows loopback relay, in the sidebar or a browser.
+- **Shared sign-in** (optional): the remote dsh uses the Windows credential store directly.
+- **`dsh-harness` command**: run `dsh-harness .` in a WSL terminal to open the current directory as a WSL workspace in DeepSeek Harness, like `code .`.
 
-| | Windows workspace | WSL workspace |
+| | Windows workspace | WSL / SSH workspace |
 |---|---|---|
-| Which dsh the session lives in | DeepSeek Harness on Windows | your own `dsh` in WSL |
-| Where commands, files and searches run | Windows (PowerShell) | WSL |
-| Models, plugins, agent settings | Windows `%USERPROFILE%\.dsh` | WSL `~/.dsh` |
+| Which dsh the session lives in | DeepSeek Harness on Windows | your own `dsh` in WSL or on the server |
+| Where commands, files and searches run | Windows (PowerShell) | WSL / the server (Linux) |
+| Models, plugins, agent settings | Windows `%USERPROFILE%\.dsh` | the remote host's `~/.dsh` |
 | Where it is shown | the same window and session list | the same window and session list |
+
+## Features at a glance
+
+### Local and remote workspaces in one list
+
+<img src="docs/images/workspaces.png" alt="Sidebar workspace list: local workspaces next to remote ones with WSL and SSH badges" width="320">
+
+Local and remote workspaces are listed side by side. A remote workspace has a host badge right of its name: a WSL workspace shows the distribution's OS version (for example `WSL · Ubuntu 26.04`), an SSH workspace shows the host name (for example `SSH · bwg`); the dot shows the connection state. Open a session and the chat, history, live output, questions and approvals all happen in this window, while its tool calls run on that host.
+
+### Connect WSL distributions and SSH hosts
+
+<img src="docs/images/remote-hosts.png" alt="Settings → General: WSL remote connections and SSH remote hosts" width="640">
+
+Remote hosts are managed in **Settings → General**. **WSL remote connections** lists this PC's WSL 2 distributions automatically; under **SSH remote hosts** you type `user@host` or `host:port`, or add a host from `~/.ssh/config` in one click. Each host shows its connection state, the remote dsh version, whether sign-in is shared and which profile runs, and can be opened in its own UI in the sidebar or a browser, disconnected or removed.
+
+### Plugins: manage per host, sync between hosts
+
+<img src="docs/images/plugins.png" alt="Plugins page, WSL / SSH tab: a host's plugin list and plugin sync" width="720">
+
+On the **Plugins** page, pick a host in the **WSL / SSH** tab to see which plugins it has, with the differences from Windows marked, and install, enable, disable or uninstall them there. **Sync plugins** below it copies plugins between any two hosts (Windows, WSL, SSH in any direction): select **Compare**, see for each plugin whether the target is missing it, has another version or is already in sync, then install one at a time or several at once. Details in [Plugins: which side has what](#plugins-which-side-has-what).
+
+### Models: configure per host, sync between hosts
+
+<img src="docs/images/models.png" alt="Settings → Models: switched to a remote host, each provider with a sync button" width="640">
+
+**Settings → Models** switches between **Windows / WSL / SSH** at the top. With a remote host selected, you edit that host's own model providers. Every provider has a sync button that copies its configuration to the other side, optionally with its API key; if the target lacks the provider's plugin, you can install it first. Details in [Models: switch hosts and sync configuration](#models-switch-hosts-and-sync-configuration).
 
 ## Install
 
-### 1. Install dsh in WSL
+### 1. Install dsh in WSL or on the SSH server
 
-The distribution must run WSL 2 (`wsl -l -v` on Windows shows the version). In a WSL terminal:
+Install your own `dsh` on every remote host you want to connect:
+
+- **WSL**: the distribution must run WSL 2 (`wsl -l -v` on Windows shows the version); install in a WSL terminal.
+- **SSH server**: install on the server. The connection uses Windows' built-in OpenSSH, so set up key-based login first and run `ssh <host>` once in PowerShell to accept the host key; see [SSH remote hosts](#ssh-remote-hosts).
 
 ```bash
 npm i -g @deepseek-ai/dsh
@@ -44,7 +75,7 @@ dsh plugin --profile desktop add .
 
 pnpm may warn that a linked package does not resolve its peer dependencies (`@deepseek-ai/cordis` and others) from the profile. Ignore the warning: DeepSeek Harness provides them when it loads the plugin. Do not switch to `file:` as suggested; that installs a copy, and later `git pull` updates would not take effect.
 
-**Do not install this plugin into the dsh inside WSL.** It is made for the Windows Host only.
+**Do not install this plugin into the dsh in WSL or on an SSH server.** It is made for the Windows Host only.
 
 ### 3. Enable
 

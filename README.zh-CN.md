@@ -2,26 +2,57 @@
 
 [English](README.md) | 简体中文
 
-让 DeepSeek Harness 像 Codex 桌面版一样使用 WSL。**只需在 Windows 上安装一次。** 每个 WSL 发行版都是一台远程主机，运行你自己用 `npm i -g @deepseek-ai/dsh` 装好的 `dsh`；它的工作区和会话直接合并到 Windows 的窗口里。
+让 DeepSeek Harness 像 Codex 桌面版一样支持 WSL 和 SSH 远程主机。**只需在 Windows 上安装一次。** 每个 WSL 发行版、每台 SSH 服务器都是一台远程主机，运行你自己用 `npm i -g @deepseek-ai/dsh` 装好的 `dsh`；它的工作区和会话直接合并到 Windows 的窗口里。
 
 - **WSL 工作区**：添加工作区时选「WSL」，从 Linux 文件系统里挑一个文件夹。这个工作区的会话在 WSL 里你自己的 `dsh` 中运行：用 WSL 的 `~/.dsh` 配置、模型和插件，命令、文件读写和搜索都在 Linux 里执行，并使用你在 WSL 里配置的沙箱。会话列表、聊天视图、历史、实时输出、提问和授权确认都在 Windows 的同一个窗口里，和 Windows 会话并列。
-- **在 WSL dsh 自己的界面里打开**：也可以通过本机回环中继，在侧边栏或浏览器里打开 WSL dsh 的原生界面。
-- **共享登录状态**（可选）：WSL 的 dsh 直接使用 Windows 的凭据存储。
-- **`dsh-harness` 命令**：在 WSL 终端里运行 `dsh-harness .`，把当前目录作为 WSL 工作区在 DeepSeek Harness 中打开，用法与 `code .` 相同。
 - **SSH 远程主机**：用法与 WSL 完全一致。在 设置 → 通用 → **SSH 远程主机** 中添加 `user@host`、`host:端口` 或 `~/.ssh/config` 里的 Host，连接后服务器上你自己的 `dsh` 的工作区和会话同样合并到这个窗口；添加工作区时选「SSH」。见下文 [SSH 远程主机](#ssh-远程主机)。
+- **插件管理与同步**：插件页按主机切换，查看和管理每台主机装了哪些插件，并把插件从一台主机同步到另一台。
+- **模型配置与同步**：模型页按主机切换，编辑各主机的模型供应商，并把供应商配置（可连同 API Key）同步到另一台主机。
+- **在远程 dsh 自己的界面里打开**：也可以通过本机回环中继，在侧边栏或浏览器里打开远程 dsh 的原生界面。
+- **共享登录状态**（可选）：远程 dsh 直接使用 Windows 的凭据存储。
+- **`dsh-harness` 命令**：在 WSL 终端里运行 `dsh-harness .`，把当前目录作为 WSL 工作区在 DeepSeek Harness 中打开，用法与 `code .` 相同。
 
-| | Windows 工作区 | WSL 工作区 |
+| | Windows 工作区 | WSL / SSH 工作区 |
 |---|---|---|
-| 会话在哪个 dsh 里 | Windows 上的 DeepSeek Harness | WSL 里你自己的 `dsh` |
-| 命令、文件、搜索在哪里执行 | Windows（PowerShell） | WSL |
-| 模型、插件、Agent 配置 | Windows 的 `%USERPROFILE%\.dsh` | WSL 的 `~/.dsh` |
+| 会话在哪个 dsh 里 | Windows 上的 DeepSeek Harness | WSL 或服务器上你自己的 `dsh` |
+| 命令、文件、搜索在哪里执行 | Windows（PowerShell） | WSL / 服务器（Linux） |
+| 模型、插件、Agent 配置 | Windows 的 `%USERPROFILE%\.dsh` | 远程主机的 `~/.dsh` |
 | 显示在哪里 | 同一个窗口、同一个会话列表 | 同一个窗口、同一个会话列表 |
+
+## 功能一览
+
+### 本机与远程工作区在同一个列表里
+
+<img src="docs/images/workspaces.png" alt="侧边栏工作区列表：本机工作区和带 WSL、SSH 标记的远程工作区并列" width="320">
+
+本机工作区和远程工作区并列显示。远程工作区名字右侧有主机标记：WSL 工作区显示发行版的系统版本（例如 `WSL · Ubuntu 26.04`），SSH 工作区显示主机名（例如 `SSH · bwg`）；圆点颜色表示连接状态。点开会话后，聊天、历史、实时输出、提问和授权确认都在这个窗口里完成，工具调用在对应主机上执行。
+
+### 连接 WSL 发行版和 SSH 主机
+
+<img src="docs/images/remote-hosts.png" alt="设置 → 通用：WSL 远程连接和 SSH 远程主机" width="640">
+
+在 **设置 → 通用** 里管理远程主机。**WSL 远程连接** 自动列出本机的 WSL 2 发行版；**SSH 远程主机** 可以手动输入 `user@host`、`host:端口`，或一键添加 `~/.ssh/config` 里的主机。每台主机显示连接状态、远程 dsh 的版本、是否共享登录和启动的 profile，并可以在侧边栏或浏览器里打开远程 dsh 自己的界面、断开或移除。
+
+### 插件：按主机管理，在主机之间同步
+
+<img src="docs/images/plugins.png" alt="插件页的 WSL / SSH 标签：主机的插件列表和插件同步" width="720">
+
+侧边栏 **插件** 页面的 **WSL / SSH** 标签里选一台主机，就能看到这台主机装了哪些插件，并标出与 Windows 的差别；可以直接安装、启用、停用、卸载。下方的 **同步插件** 可以选择从哪台主机到哪台主机（Windows、WSL、SSH 任意组合），点**比较**后，每个插件会标出在目标主机上缺少、版本不同还是已一致，再逐个或批量安装。详见下文 [插件：哪边装了什么](#插件哪边装了什么)。
+
+### 模型：按主机配置，在主机之间同步
+
+<img src="docs/images/models.png" alt="设置 → 模型：切换到远程主机，每个供应商带同步按钮" width="640">
+
+**设置 → 模型** 顶部可以切换 **Windows / WSL / SSH**。选中远程主机后，编辑的是那台主机自己的模型供应商。每个供应商都有同步按钮，可以把它的配置同步到另一端，并可选择同时复制 API Key；目标端缺少供应商插件时可以先安装。详见下文 [模型：切换主机与同步配置](#模型切换主机与同步配置)。
 
 ## 安装
 
-### 1. 在 WSL 里安装 dsh
+### 1. 在 WSL 或 SSH 服务器上安装 dsh
 
-发行版必须是 WSL 2（在 Windows 上运行 `wsl -l -v` 查看）。在 WSL 终端里：
+在每台要连接的远程主机上安装你自己的 `dsh`：
+
+- **WSL**：发行版必须是 WSL 2（在 Windows 上运行 `wsl -l -v` 查看），在 WSL 终端里安装。
+- **SSH 服务器**：在服务器上安装。连接使用 Windows 自带的 OpenSSH，需要先配好密钥登录，并在 PowerShell 里手动 `ssh <主机>` 一次接受主机密钥，见下文 [SSH 远程主机](#ssh-远程主机)。
 
 ```bash
 npm i -g @deepseek-ai/dsh
@@ -44,7 +75,7 @@ dsh plugin --profile desktop add .
 
 pnpm 可能会警告：链接进来的包不会从配置目录解析 peer 依赖（`@deepseek-ai/cordis` 等）。这个警告可以忽略，DeepSeek Harness 加载插件时会提供这些包。不要按提示改用 `file:`：那样安装的是一份副本，之后 `git pull` 的更新不会生效。
 
-**不要在 WSL 里的 dsh 中安装本插件。** 它只为 Windows 主机设计。
+**不要在 WSL 或 SSH 服务器上的 dsh 中安装本插件。** 它只为 Windows 主机设计。
 
 ### 3. 启用
 
