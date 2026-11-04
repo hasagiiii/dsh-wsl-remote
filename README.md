@@ -8,6 +8,7 @@ Bring WSL and SSH remote hosts to DeepSeek Harness, the way the Codex desktop ap
 - **SSH remote hosts**: used exactly like WSL. Add `user@host`, `host:port` or a `Host` from `~/.ssh/config` under Settings → General → **SSH remote hosts**; once connected, the workspaces and sessions of your own `dsh` on the server are merged into this window the same way, and "Add workspace" offers **SSH**. See [SSH remote hosts](#ssh-remote-hosts).
 - **Plugin management and sync**: the Plugins page switches between hosts, shows and manages what each host has installed, and copies plugins from one host to another.
 - **Model configuration and sync**: the Models page switches between hosts, edits each host's model providers, and copies a provider's configuration (optionally with its API key) to another host.
+- **Copy a session to another workspace**: "Copy to workspace…" in the session menu copies the full conversation into any workspace (local, or on a WSL / SSH host) as a new session you continue there; the original is left unchanged.
 - **Open the remote dsh's own UI**: through a Windows loopback relay, in the sidebar or a browser.
 - **Shared sign-in** (optional): the remote dsh uses the Windows credential store directly.
 - **`dsh-harness` command**: run `dsh-harness .` in a WSL terminal to open the current directory as a WSL workspace in DeepSeek Harness, like `code .`.
@@ -44,6 +45,22 @@ On the **Plugins** page, pick a host in the **WSL / SSH** tab to see which plugi
 <img src="docs/images/models.png" alt="Settings → Models: switched to a remote host, each provider with a sync button" width="640">
 
 **Settings → Models** switches between **Windows / WSL / SSH** at the top. With a remote host selected, you edit that host's own model providers. Every provider has a sync button that copies its configuration to the other side, optionally with its API key; if the target lacks the provider's plugin, you can install it first. Details in [Models: switch hosts and sync configuration](#models-switch-hosts-and-sync-configuration).
+
+### Sessions: copy to another workspace
+
+In a session row's "…" menu in the sidebar, choose **Copy to workspace…**. The dialog lists every workspace grouped by host (Windows, each WSL distribution, each SSH host). Pick one, select **Next**, confirm the files to bring along, and select **Copy**:
+
+- The new session carries the original's full history up to its last completed turn (messages, tool calls and results, image and file attachments). It appears under the target workspace and opens, ready to continue. The original session is not changed.
+- **Files the session produced come along**: the second step lists the files this session created or changed (from its write and edit tool calls and its presented deliverables), with their current contents.
+  - Files in the original workspace go to the same paths in the target workspace, for example `E:\proj\x\src\app.js` → `/home/me/x/src/app.js`.
+  - Files outside the original workspace go into the target workspace's `.dsh-external` folder, laid out by their original path, for example `E:\data\a.csv` → `.dsh-external/E/data/a.csv` and `/tmp/b.txt` → `.dsh-external/tmp/b.txt`. Nothing is written outside the target workspace.
+  - Files the target does not have yet are selected; files it already has are marked "exists in target" and left unselected, and replacing them also needs **Overwrite** ticked, otherwise the target keeps its version. Workspace files are not offered when the target is the same folder, nor outside files when it is the same host (they are already in place).
+  - More than 20 selected files travel as one zip built on the source host and unpacked to their places at the target; the result is the same as copying them one by one.
+  - Deleted files and files over 10 MB are not copied; the list says why (the selection is limited to 30 MB in total). The model's note lists the files that came along, with "original path → new location" for outside ones.
+- The new session runs on the host of the target workspace: copied into a WSL / SSH workspace, the `dsh` on that host runs it, with its models, plugins and sandbox; copied back to Windows likewise. Copying between two workspaces on the same host works too.
+- The working directory becomes the target workspace's folder, and **paths in the copied history are changed to match**: the original workspace folder, in every way it was written (a Windows path, the same path JSON-escaped or with forward slashes, a WSL session's `/mnt/<drive>/…`, Windows's `\\wsl.localhost\<distro>\…` view of a WSL folder), becomes the target folder in the target's spelling, and each file brought over from outside the workspace becomes its place under `.dsh-external/`. This covers messages, tool calls (their arguments stay valid JSON) and tool results. Left exactly as recorded: the model's reasoning blocks and provider replay data (rewriting them would invalidate them), file contents shown in edit diffs, and paths that are neither the workspace folder nor a copied file. Before its next request the model gets a note saying where the conversation came from, that its paths were changed, where it now works and which files came along.
+- Like DeepSeek Harness's own **Fork session**, only completed turns are copied: a turn in progress is left out, and a session with no completed turn cannot be copied yet. Copy a subagent's session through its parent.
+- Scheduled tasks and background jobs belong to the original session and do not run again in the copy; a goal comes along with the history but disarmed (as after a restart or a fork), and continues only if you resume it.
 
 ## Install
 
@@ -231,6 +248,7 @@ Results are remembered, so each id is resolved once. A workspace or session a di
 - `lib/transport.js`: run a Linux argv on a remote host: `wsl.exe -d` for WSL, `ssh -T -o BatchMode=yes` for SSH (each argument single-quoted); `~/.ssh/config` parsing.
 - `server/launch.sh`, `server/agent.mjs`: start `dsh` through the login shell; the agent is a Cordis plugin loaded with `dsh --patch` that runs only when the Windows Host started it. A marker line precedes the mux frames on the pipe, so an SSH login banner is discarded.
 - `server/dsh-harness.sh`, `lib/requests.js`: the `dsh-harness` command.
+- `server/session-copy.mjs`, `server/workspace-files.mjs`, `server/path-rewrite.mjs`, `lib/session-copy.js`: session copy. Both halves (read, create) use only dsh's own services (`sessionQuery`, the attachment store, `agents.create` with a seeded history, the way **Fork session** does) plus `node:fs` for the workspace files; `path-rewrite.mjs` points the copied history's paths at the target. The same files run in the Windows Host and, deployed with the agent, on a remote host through the pipe.
 - `lib/linux-fs.js`: the WSL / SSH folder picker, and the picker addresses (`\\wsl.localhost\…`, `ssh://<host>/…`) to and from a host and Linux path.
 
 ## Limitations
@@ -244,6 +262,8 @@ Results are remembered, so each id is resolved once. A workspace or session a di
 - A plugin's sidebar works for WSL sessions only when the same plugin is installed in the WSL dsh too; otherwise its WSL requests fail. A plugin route that names no session (shared assets, global settings) is always answered by Windows.
 - "Open in app" opens a WSL file on Windows through `\\wsl.localhost` (9P).
 - The workspace row has no extension slot for plugins, so the WSL badge is placed into the sidebar page; a change to the DSH sidebar structure may need a plugin update.
+- A session copy travels as one pipe message with its history, attachments and chosen files, up to 60 MB; a larger session reports that it cannot be copied. Copied across hosts, the new session uses the target host's default model.
+- Copied files are found from the session's own tool calls. Files a command changed (for example through `bash` / `pwsh`, a build or `git`) are not listed; bring those over with git or copy them by hand.
 
 ## Development
 

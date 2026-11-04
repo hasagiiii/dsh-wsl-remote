@@ -37,6 +37,7 @@ import { createModelService } from './lib/models.js';
 import { createModelPluginService } from './lib/model-plugins.js';
 import { PluginSyncRuns } from './lib/plugin-sync.js';
 import { inspectGitSource } from './lib/git-source.js';
+import { createSessionCopier } from './lib/session-copy.js';
 
 /** `git <args>` on Windows, bounded; never through a shell. */
 const windowsGit = (args) => new Promise((resolve) => {
@@ -264,6 +265,12 @@ export default class WslRemoteService extends Service {
       const plan = await this.modelPlugins.plan(selector);
       return { ...plan, name: plan.targetBundleName ?? plan.sourceBundleName ?? plan.sourceBundle?.name, spec: plan.installSpec };
     };
+    // Session copy into another workspace, on this or another host.
+    this.sessionCopier = createSessionCopier({
+      ctx,
+      connection: (host) => this.connection(host),
+      label: (host) => hostLabel(host),
+    });
     ctx.effect(() => () => this.models.dispose(), 'wsl-remote: model sync previews');
     ctx.inject(['typertGateway'], (scope) => {
       scope.effect(() => {
@@ -308,6 +315,21 @@ export default class WslRemoteService extends Service {
         },
       });
       route('connections', ['GET'], () => this.status());
+      // Copy a session into another workspace. Ids are the ones this window
+      // sees (merged); the bridge resolves which host reads and which writes.
+      // `sessions/copy-plan` lists the workspace files the session changed and
+      // which already exist in the target; `files` picks the ones to carry.
+      route('sessions/copy-plan', ['POST'], async (request) => {
+        const { sessionId, workspaceId } = await body(request);
+        if (typeof sessionId !== 'string' || typeof workspaceId !== 'string') throw new Error('sessionId and workspaceId are required');
+        return this.copySessionPlan(sessionId, workspaceId);
+      });
+      route('sessions/copy', ['POST'], async (request) => {
+        const { sessionId, workspaceId, files, overwrite } = await body(request);
+        if (typeof sessionId !== 'string' || typeof workspaceId !== 'string') throw new Error('sessionId and workspaceId are required');
+        if (files !== undefined && (!Array.isArray(files) || files.some((file) => typeof file !== 'string'))) throw new Error('files must be a list of workspace-relative paths');
+        return this.copySession(sessionId, workspaceId, { files: files ?? [], overwrite: overwrite === true });
+      });
       route('connect', ['POST'], async (request) => {
         const { distro } = await body(request);
         await this.known(distro);
@@ -638,6 +660,40 @@ export default class WslRemoteService extends Service {
     await this.fresh();
     if (isDistro(distro) && !this.distros.some((entry) => entry.name === distro)) await this.discover();
     if (!isDistro(distro) || !this.distros.some((entry) => entry.name === distro)) throw new Error(`Unknown WSL distribution: ${String(distro)}`);
+  }
+
+  /** Route a copy and connect the remote hosts involved, like opening one of their sessions. */
+  async copyRouteConnected(sessionId, workspaceId) {
+    const route = await this.bridge.copyRoute(sessionId, workspaceId);
+    for (const host of new Set([route.from.host, route.to.host])) {
+      if (host !== null) await this.ensureConnected(host);
+    }
+    return route;
+  }
+
+  /**
+   * The files a session created or changed, for the copy dialog.
+   * `sameHost`: external files are already at their original path there.
+   * `sameFolder`: workspace files are already there too.
+   * @returns {Promise<{ root?: string, files: object[], skipped: object[], targetRoot: string, existing: string[], sameHost: boolean, sameFolder: boolean }>}
+   */
+  async copySessionPlan(sessionId, workspaceId) {
+    const route = await this.copyRouteConnected(sessionId, workspaceId);
+    const plan = await this.sessionCopier.plan(route);
+    const sameHost = route.from.host === route.to.host;
+    return { ...plan, sameHost, sameFolder: sameHost && plan.root !== undefined && plan.root === plan.targetRoot };
+  }
+
+  /**
+   * Copy one session into a workspace (any host), with the chosen workspace files.
+   * @returns {Promise<{ sessionId: string, workspaceId: string, cwd: string, host: string | null, files: object }>}
+   */
+  async copySession(sessionId, workspaceId, { files = [], overwrite = false } = {}) {
+    const route = await this.copyRouteConnected(sessionId, workspaceId);
+    const created = await this.sessionCopier.copy({ ...route, files, overwrite });
+    this.bridge.noteSession(created.sessionId, route.to.host);
+    // The window knows the merged id of the target workspace, not the host's own.
+    return { ...created, workspaceId, host: route.to.host };
   }
 
   connection(distro) {

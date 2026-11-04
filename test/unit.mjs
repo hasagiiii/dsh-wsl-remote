@@ -24,6 +24,10 @@ import { comparePlugins, wslInstallSpec } from '../lib/plugins.js';
 import { PluginInstalls, STALL_MS } from '../lib/installs.js';
 import { EventEmitter } from 'node:events';
 import { runInNewContext } from 'node:vm';
+import { buildCopySeed, collectAttachmentRefs, copyNotice, latestCompletedPrefixBoundary } from '../server/session-copy.mjs';
+import { MAX_COPY_BYTES, createSessionCopier } from '../lib/session-copy.js';
+import { externalRelative, relativeInside, targetPath, touchedFiles, unzipFiles, writeFiles, zipFiles } from '../server/workspace-files.mjs';
+import { pathRewriter, rewriteEvents } from '../server/path-rewrite.mjs';
 
 let failures = 0;
 async function test(name, body) {
@@ -686,6 +690,176 @@ await test('plugin installs: background job with live output, stall notice and c
   assert.equal(events.listenerCount('plugin-install'), 0);
 });
 
+await test('session copy: prefix, seed, attachments, notice, size limit', async () => {
+  const ev = (seq, type, data = {}, extra = {}) => ({ type, seq, time: 1000 + seq, data, ...extra });
+  const events = [
+    ev(0, 'turn/start', { turn: 1 }),
+    ev(1, 'user/message', { id: 'u1', role: 'user', content: [{ type: 'text', text: 'hi' }, { type: 'image', attachment: { attachmentId: 'sha256:aa', mediaType: 'image/png' } }] }, { surfaceOp: 'append' }),
+    ev(2, 'assistant/message', { message: { content: [{ type: 'file', attachment: { attachmentId: 'sha256:bb', name: 'a.txt' } }] } }),
+    ev(3, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+    ev(4, 'session/title', { title: 't' }),
+    ev(5, 'turn/start', { turn: 2 }),
+    ev(6, 'user/message', { id: 'u2', role: 'user', content: [] }, { surfaceOp: 'append' }),
+  ];
+  // Like the shipped fork: through the last turn/end plus standalone records, never into the open turn.
+  assert.equal(latestCompletedPrefixBoundary(events), 4);
+  assert.equal(latestCompletedPrefixBoundary(events.slice(0, 2)), undefined);
+  const refs = collectAttachmentRefs(events);
+  assert.deepEqual(refs.images.map((ref) => ref.attachmentId), ['sha256:aa']);
+  assert.deepEqual(refs.files.map((ref) => ref.name), ['a.txt']);
+
+  // The seed keeps the prefix exactly (later records point at earlier seqs), then marks the cut and moves the cwd.
+  const { seed, inheritedEventCount } = buildCopySeed(events.slice(0, 5), '/home/me/repo');
+  assert.equal(inheritedEventCount, 5);
+  assert.deepEqual(seed.slice(0, 5), events.slice(0, 5));
+  assert.deepEqual(seed.map((event) => event.seq), [0, 1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(seed[5], { type: 'session/end-seed', seq: 5, time: 1004, data: { inherited: true } });
+  assert.deepEqual(seed[6], { type: 'working-directory/change', seq: 6, time: 1004, data: { cwd: '/home/me/repo' } });
+  assert.notEqual(seed[1], events[1], 'the seed is a copy, not the source objects');
+
+  assert.match(copyNotice({ from: 'E:\\a', to: '/home/me/a', fromHost: 'Windows', toHost: 'WSL: Ubuntu' }), /refer to "E:\\\\a" on Windows\. The working directory is now "\/home\/me\/a" on WSL: Ubuntu\./);
+  assert.match(copyNotice({ from: 'E:\\a', to: 'E:\\b' }), /refer to "E:\\\\a"\. The working directory is now "E:\\\\b"\./);
+
+  // The copier reads on the source host, writes on the target host, and names hosts only across hosts.
+  const calls = [];
+  const fake = (host) => ({
+    exportSession: async (id, options) => (calls.push(['export', host, id, options]), { format: 1, events: [], images: [], files: [] }),
+    importSession: async (copy, target) => (calls.push(['import', host, target]), { sessionId: 'new', workspaceId: target.workspaceId, cwd: '/x' }),
+  });
+  const copier = createSessionCopier({ ctx: {}, connection: fake, label: (host) => `WSL: ${host}` });
+  await copier.copy({ from: { host: 'A', sessionId: 's' }, to: { host: 'A', workspaceId: 'w' } });
+  await copier.copy({ from: { host: 'A', sessionId: 's' }, to: { host: 'B', workspaceId: 'w2' }, files: ['src/a.js'], overwrite: true });
+  assert.deepEqual(calls, [
+    ['export', 'A', 's', { files: [] }], ['import', 'A', { workspaceId: 'w', overwrite: false }],
+    ['export', 'A', 's', { files: ['src/a.js'] }], ['import', 'B', { workspaceId: 'w2', overwrite: true, fromHost: 'WSL: A', toHost: 'WSL: B' }],
+  ]);
+  const huge = createSessionCopier({ ctx: {}, connection: () => ({ exportSession: async () => ({ format: 1, events: [], images: [{ data: 'x'.repeat(MAX_COPY_BYTES) }], files: [] }) }), label: String });
+  await assert.rejects(huge.copy({ from: { host: 'A', sessionId: 's' }, to: { host: 'B', workspaceId: 'w' } }), /too large to copy/);
+});
+
+await test('session copy: workspace files a session changed', async () => {
+  const W = String.fromCharCode(92); // one backslash, spelled without escapes
+  const win = (...parts) => parts.join(W);
+  // Membership by the source host's path rules.
+  assert.equal(relativeInside('/home/me/repo', '/home/me/repo/src/a.js'), 'src/a.js');
+  assert.equal(relativeInside('/home/me/repo', '/home/me/repo'), undefined);
+  assert.equal(relativeInside('/home/me/repo', '/home/me/repo2/a.js'), undefined);
+  assert.equal(relativeInside('/home/me/repo', '/home/me/a.js'), undefined);
+  assert.equal(relativeInside(win('E:', 'proj', 'x'), win('E:', 'proj', 'x', 'src', 'a.js')), 'src/a.js');
+  assert.equal(relativeInside(win('E:', 'proj', 'x'), win('e:', 'proj', 'x', 'a.js')), 'a.js', 'Windows paths compare without case');
+  assert.equal(relativeInside(win('E:', 'proj', 'x'), '/mnt/e/proj/x/a.js'), undefined, 'a Linux spelling is not inside a Windows root');
+
+  // Files outside the workspace go under .dsh-external, laid out by their absolute path.
+  assert.equal(externalRelative(win('e:', 'data', 'a.csv')), '.dsh-external/E/data/a.csv');
+  assert.equal(externalRelative(win('', '', 'server', 'share', 'b.txt')), '.dsh-external/server/share/b.txt');
+  assert.equal(externalRelative('/tmp/b.txt'), '.dsh-external/tmp/b.txt');
+  assert.equal(externalRelative('/'), undefined);
+  assert.equal(externalRelative('relative/c.txt'), undefined);
+  assert.equal(targetPath('/home/me/x', externalRelative(win('E:', 'data', 'a.csv'))), '/home/me/x/.dsh-external/E/data/a.csv');
+
+  // The zip round-trips text and binary, compressible or not, with UTF-8 names.
+  const entries = [
+    { name: 'src/a.js', data: Buffer.from('console.log(1)\n'.repeat(100)) },
+    { name: '中文/说明.md', data: Buffer.from('# 你好\n') },
+    { name: 'bin/r.dat', data: Buffer.from([0, 255, 1, 254, 2, 253]) },
+    { name: 'empty.txt', data: Buffer.alloc(0) },
+  ];
+  const packed = zipFiles(entries);
+  assert.ok(packed.length < entries.reduce((sum, entry) => sum + entry.data.length, 0), 'compresses');
+  assert.deepEqual(unzipFiles(packed).map(({ name, data }) => [name, data.toString('hex')]), entries.map(({ name, data }) => [name, data.toString('hex')]));
+  const damaged = Buffer.from(packed);
+  damaged[60] ^= 0xff;
+  assert.throws(() => unzipFiles(damaged), /damaged|zip|invalid|incorrect/i);
+
+  // Successful write/edit/str_replace_editor calls and presented files; not reads, failures or views.
+  const ev = (seq, type, data) => ({ type, seq, time: seq, data });
+  const call = (seq, name, args) => ev(seq, 'tool/call', { callId: `c${seq}`, name, arguments: JSON.stringify(args) });
+  const result = (seq, callSeq, meta, isError = false) => ev(seq, 'tool/result', { message: { toolCallId: `c${callSeq}`, isError }, ...(meta ? { meta } : {}) });
+  const events = [
+    call(0, 'write', { file_path: '/r/a.js' }), result(1, 0, { path: '/r/a.js' }),
+    call(2, 'edit', { file_path: 'b.md' }), result(3, 2, undefined),
+    call(4, 'read', { file_path: '/r/c.js' }), result(5, 4, { path: '/r/c.js' }),
+    call(6, 'write', { file_path: '/r/d.js' }), result(7, 6, undefined, true),
+    call(8, 'str_replace_editor', { command: 'view', path: '/r/e.js' }), result(9, 8, { path: '/r/e.js' }),
+    call(10, 'str_replace_editor', { command: 'create', path: '/r/f.js' }), result(11, 10, { path: '/r/f.js' }),
+    ev(12, 'working-directory/change', { cwd: '/r/sub' }),
+    call(13, 'write', { file_path: 'g.txt' }), result(14, 13, undefined),
+    ev(15, 'deliverables/presented', { files: [{ path: '/r/out/report.pdf' }, '/r/a.js'] }),
+  ];
+  const touched = touchedFiles(events, '/r');
+  assert.deepEqual(touched.map((entry) => entry.path), ['/r/a.js', '/r/b.md', '/r/f.js', '/r/sub/g.txt', '/r/out/report.pdf']);
+  assert.deepEqual(touched[0].sources, ['write', 'present']);
+
+  // Target paths stay inside the target workspace.
+  assert.equal(targetPath('/home/me/x', 'src/a.js'), '/home/me/x/src/a.js');
+  assert.equal(targetPath(win('E:', 'x'), 'src/a.js'), win('E:', 'x', 'src', 'a.js'));
+  for (const bad of ['../a', 'a/../../b', '/etc/passwd', 'a//b', `a${W}b`, '']) assert.throws(() => targetPath('/home/me/x', bad), /path/);
+  assert.throws(() => targetPath(win('E:', 'x'), 'C:/evil'), /invalid file path/);
+  assert.throws(() => targetPath(win('E:', 'x'), 'a.txt:stream'), /invalid file path/);
+
+  // Writing keeps an existing file unless asked to overwrite.
+  const root = mkdtempSync(join(tmpdir(), 'wslr-files-'));
+  writeFileSync(join(root, 'keep.txt'), 'old');
+  const data = (text) => Buffer.from(text).toString('base64');
+  const first = await writeFiles(root, [{ relative: 'keep.txt', data: data('new') }, { relative: 'deep/new.txt', data: data('hi') }]);
+  assert.deepEqual(first, { written: ['deep/new.txt'], kept: ['keep.txt'] });
+  assert.equal(readFileSync(join(root, 'keep.txt'), 'utf8'), 'old');
+  assert.equal(readFileSync(join(root, 'deep', 'new.txt'), 'utf8'), 'hi');
+  const second = await writeFiles(root, [{ relative: 'keep.txt', data: data('new') }], { overwrite: true });
+  assert.deepEqual(second, { written: ['keep.txt'], kept: [] });
+  assert.equal(readFileSync(join(root, 'keep.txt'), 'utf8'), 'new');
+
+  assert.match(copyNotice({ from: '/a', to: '/b', files: ['src/a.js', 'b.md'] }), /were copied to the same paths relative to the new working directory: src\/a\.js, b\.md\. Other files/);
+});
+
+await test('session copy: paths in the history point at the new workspace', () => {
+  const B = String.fromCharCode(92);
+  const win = (...parts) => parts.join(B);
+  const toWsl = pathRewriter({ fromRoot: win('E:', 'proj', 'x'), toRoot: '/home/me/x', externals: { [win('E:', 'data', 'a.csv')]: '/home/me/x/.dsh-external/E/data/a.csv' } });
+  const cases = [
+    [`edit ${win('E:', 'proj', 'x', 'src', 'app.js')} now`, 'edit /home/me/x/src/app.js now'],
+    [`cd ${win('e:', 'proj', 'x')}`, 'cd /home/me/x'],
+    [JSON.stringify({ file_path: win('E:', 'proj', 'x', 'README.md') }), '{"file_path":"/home/me/x/README.md"}'],
+    ['open E:/proj/x/src/app.js', 'open /home/me/x/src/app.js'],
+    ['cd /mnt/e/proj/x && ls /mnt/e/proj/x/src', 'cd /home/me/x && ls /home/me/x/src'],
+    [`"${win('E:', 'proj', 'x')}".`, '"/home/me/x".'],
+    [`wrote ${win('E:', 'data', 'a.csv')} ok`, 'wrote /home/me/x/.dsh-external/E/data/a.csv ok'],
+    // Not the root: a sibling folder, the external file's parent, a URL.
+    [`${win('E:', 'proj', 'x2', 'a.js')} ${win('E:', 'proj', 'xy')}`, `${win('E:', 'proj', 'x2', 'a.js')} ${win('E:', 'proj', 'xy')}`],
+    [`ls ${win('E:', 'data')}`, `ls ${win('E:', 'data')}`],
+    ['see https://example.com/proj/x', 'see https://example.com/proj/x'],
+  ];
+  for (const [input, expected] of cases) assert.equal(toWsl(input), expected, input);
+
+  const toWin = pathRewriter({ fromRoot: '/home/me/x', fromHost: { distro: 'Ubuntu' }, toRoot: win('E:', 'proj', 'x') });
+  assert.equal(toWin('cat /home/me/x/src/app.js'), `cat ${win('E:', 'proj', 'x', 'src', 'app.js')}`);
+  assert.equal(toWin(`open ${win('', '', 'wsl.localhost', 'Ubuntu', 'home', 'me', 'x', 'a.md')}`), `open ${win('E:', 'proj', 'x', 'a.md')}`);
+  assert.equal(toWin('/home/me/xy/a and /Home/me/x/a'), '/home/me/xy/a and /Home/me/x/a', 'POSIX roots match exactly');
+
+  // Events: tool arguments stay valid JSON; reasoning, the replay stream, message source and diff contents stay as recorded.
+  const events = [
+    { type: 'tool/call', seq: 0, time: 0, data: { callId: 'c1', name: 'write', arguments: JSON.stringify({ file_path: win('E:', 'proj', 'x', 'a.js'), content: 'x' }) } },
+    { type: 'tool/result', seq: 1, time: 0, data: { message: { toolCallId: 'c1', content: [{ type: 'text', text: `Wrote ${win('E:', 'proj', 'x', 'a.js')}` }] }, meta: { path: win('E:', 'proj', 'x', 'a.js'), diffs: [{ path: win('E:', 'proj', 'x', 'a.js'), oldText: `root = "${win('E:', 'proj', 'x')}"`, newText: 'y' }] } } },
+    { type: 'assistant/message', seq: 2, time: 0, data: { message: { role: 'assistant', content: [{ type: 'reasoning', text: `look in ${win('E:', 'proj', 'x')}` }, { type: 'text', text: `done in ${win('E:', 'proj', 'x')}` }, { type: 'tool-call', id: 't', name: 'read', arguments: JSON.stringify({ file_path: win('E:', 'proj', 'x', 'b.md') }) }], source: { kind: 'model', provider: 'p', model: 'm', replayState: { blob: win('E:', 'proj', 'x') } } }, stream: [{ type: 'chunk', chunk: { block: { text: win('E:', 'proj', 'x') } } }] } },
+    { type: 'request/header', seq: 3, time: 0, data: { header: { config: { note: win('E:', 'proj', 'x') } } } },
+  ];
+  const { events: out, changed } = rewriteEvents(events, toWsl);
+  assert.equal(changed, 3);
+  assert.deepEqual(JSON.parse(out[0].data.arguments), { file_path: '/home/me/x/a.js', content: 'x' });
+  assert.equal(out[1].data.message.content[0].text, 'Wrote /home/me/x/a.js');
+  assert.equal(out[1].data.meta.path, '/home/me/x/a.js');
+  assert.equal(out[1].data.meta.diffs[0].path, '/home/me/x/a.js');
+  assert.equal(out[1].data.meta.diffs[0].oldText, events[1].data.meta.diffs[0].oldText, 'file contents in a diff are kept');
+  const message = out[2].data.message;
+  assert.deepEqual(message.content[0], events[2].data.message.content[0], 'reasoning is kept');
+  assert.equal(message.content[1].text, 'done in /home/me/x');
+  assert.deepEqual(JSON.parse(message.content[2].arguments), { file_path: '/home/me/x/b.md' });
+  assert.deepEqual(message.source, events[2].data.message.source, 'replay state is kept');
+  assert.deepEqual(out[2].data.stream, events[2].data.stream, 'the raw stream is kept');
+  assert.equal(out[3], events[3], 'request headers are kept');
+  assert.equal(events[0].data.arguments.includes('/home/me/x'), false, 'the input is not mutated');
+});
+
 await test('settings: invalid fields are dropped', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'wslr-')), 'wsl-remote.json');
   const value = writeSettings({ shareLogin: false, profile: 'bad name', autoConnect: ['Ubuntu', 'x y', 'Ubuntu'], ports: { Ubuntu: 40123, Bad: 80 } }, file);
@@ -730,9 +904,12 @@ function memoryStore(label) {
 
 /** Serve the WSL agent against a fake ctx over in-memory streams. */
 async function startAgent(input, output, wslStore) {
-  // Deployed layout: agent.mjs and mux.js side by side.
+  // Deployed layout: agent.mjs, session-copy.mjs and mux.js side by side.
   const dir = mkdtempSync(join(tmpdir(), 'wslr-agent-'));
   copyFileSync(new URL('../server/agent.mjs', import.meta.url), join(dir, 'agent.mjs'));
+  copyFileSync(new URL('../server/session-copy.mjs', import.meta.url), join(dir, 'session-copy.mjs'));
+  copyFileSync(new URL('../server/workspace-files.mjs', import.meta.url), join(dir, 'workspace-files.mjs'));
+  copyFileSync(new URL('../server/path-rewrite.mjs', import.meta.url), join(dir, 'path-rewrite.mjs'));
   copyFileSync(new URL('../lib/mux.js', import.meta.url), join(dir, 'mux.js'));
   writeFileSync(join(dir, 'package.json'), '{"type":"module"}');
   const { serve } = await import(pathToFileURL(join(dir, 'agent.mjs')).href);
@@ -784,7 +961,7 @@ await test('shared login: WSL reads and refreshes the Windows store under its lo
 
   const dispose = await startAgent(toWsl, toWindows, wslStore);
   const hello = await session.hello.promise;
-  assert.equal(hello.agent, 2);
+  assert.equal(hello.agent, 4);
 
   // Reads come from Windows; the WSL-only cookie secret stays local.
   assert.deepEqual(await wslStore.resolve('DEEPSEEK_API_KEY'), { value: 'sk-windows', source: 'windows' });

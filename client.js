@@ -92,6 +92,35 @@ window.__ModuleLoader__.load({
         'launcher.conflict': '{path} 已存在且不是本插件创建的，未覆盖；dsh-harness 命令不可用。',
         'launcher.error': '无法安装 dsh-harness 命令：{message}',
         'ws.title': '添加工作区',
+        'copy.menu': '复制到工作区…',
+        'copy.title': '复制会话到工作区',
+        'copy.hint': '将「{title}」的完整对话历史复制到所选工作区，生成一个新会话，在那里继续对话。原会话保持不变。复制到另一台主机时，新会话在那台主机上运行，工作目录换成目标工作区。',
+        'copy.untitled': '未命名会话',
+        'copy.target': '目标工作区',
+        'copy.current': '当前',
+        'copy.submit': '复制',
+        'copy.busy': '正在复制…',
+        'copy.loading': '正在读取…',
+        'copy.back': '上一步',
+        'copy.submitFiles': '复制会话和 {count} 个文件',
+        'copy.files.title': '复制到 {workspace}：一并复制的文件',
+        'copy.files.hint': '下面是这个会话新建或修改过的文件（来自它的写入、编辑和交付记录），复制的是它们现在的内容：原工作区里的文件按相对路径放到目标工作区（{from} → {to}），原工作区以外的文件放到目标工作区的 .dsh-external 文件夹，按原路径分层。',
+        'copy.files.none': '这个会话没有新建或修改过文件，只复制会话。',
+        'copy.files.sameFolder': '这些文件在目标位置已经存在（同一个文件夹或同一台主机），只复制会话。',
+        'copy.files.inside': '原工作区内',
+        'copy.files.outside': '原工作区以外（放到 {dir}/）',
+        'copy.files.zip': '{count} 个文件会打包成一个 zip 传输，到目标后自动解压到各自位置。',
+        'copy.files.all': '全选',
+        'copy.files.noneSelected': '全不选',
+        'copy.files.count': '已选 {chosen} / {total}',
+        'copy.files.exists': '目标已有',
+        'copy.files.overwrite': '覆盖目标工作区中已有的 {count} 个文件（不勾选则保留目标里的版本）',
+        'copy.files.skipped': '{count} 个文件不会复制',
+        'copy.skip.unmappable': '路径无法映射',
+        'copy.skip.missing': '已不存在',
+        'copy.skip.not-file': '不是文件',
+        'copy.skip.too-large': '超过 10 MB',
+        'copy.skip.too-many': '超过 500 个文件的上限',
         'ws.type': '工作区类型',
         'ws.local': '本地',
         'ws.localDesc': '在这台 Windows 电脑上选择文件夹',
@@ -315,6 +344,35 @@ window.__ModuleLoader__.load({
         'launcher.conflict': '{path} already exists and was not created by this plugin, so it was left alone; the dsh-harness command is unavailable.',
         'launcher.error': 'Could not install the dsh-harness command: {message}',
         'ws.title': 'Add workspace',
+        'copy.menu': 'Copy to workspace…',
+        'copy.title': 'Copy session to a workspace',
+        'copy.hint': 'Copies the full conversation of “{title}” into the chosen workspace as a new session you can continue there. The original session is not changed. Copied to another host, the new session runs on that host, with the target workspace as its working directory.',
+        'copy.untitled': 'Untitled session',
+        'copy.target': 'Target workspace',
+        'copy.current': 'current',
+        'copy.submit': 'Copy',
+        'copy.busy': 'Copying…',
+        'copy.loading': 'Reading…',
+        'copy.back': 'Back',
+        'copy.submitFiles': 'Copy session and {count} files',
+        'copy.files.title': 'Copy to {workspace}: files to bring along',
+        'copy.files.hint': 'These are the files this session created or changed (from its writes, edits and deliverables); their current contents are copied. Files in the original workspace go to the same paths in the target workspace ({from} → {to}); files outside it go into the target workspace\u2019s .dsh-external folder, laid out by their original path.',
+        'copy.files.none': 'This session did not create or change files; only the session is copied.',
+        'copy.files.sameFolder': 'These files are already in place at the target (same folder or same host); only the session is copied.',
+        'copy.files.inside': 'In the original workspace',
+        'copy.files.outside': 'Outside the original workspace (into {dir}/)',
+        'copy.files.zip': 'The {count} files travel as one zip and are unpacked to their places at the target.',
+        'copy.files.all': 'Select all',
+        'copy.files.noneSelected': 'Select none',
+        'copy.files.count': '{chosen} of {total} selected',
+        'copy.files.exists': 'exists in target',
+        'copy.files.overwrite': 'Overwrite the {count} files that already exist in the target workspace (otherwise the target keeps its version)',
+        'copy.files.skipped': '{count} files will not be copied',
+        'copy.skip.unmappable': 'path cannot be mapped',
+        'copy.skip.missing': 'no longer exists',
+        'copy.skip.not-file': 'not a file',
+        'copy.skip.too-large': 'larger than 10 MB',
+        'copy.skip.too-many': 'over the 500-file limit',
         'ws.type': 'Workspace type',
         'ws.local': 'Local',
         'ws.localDesc': 'Choose a folder on this Windows PC',
@@ -594,6 +652,38 @@ window.__ModuleLoader__.load({
       .lwr-card[aria-checked=true] .lwr-radio::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-brand-primary)}
       .lwr-card-title{font-size:14px;font-weight:510;line-height:20px}
       .lwr-card-desc{font-size:12px;line-height:17px;color:var(--dsw-alias-label-secondary)}
+      .lwr-copy-hint{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+      .lwr-copy-list{margin-top:12px;max-height:360px;overflow:auto;display:flex;flex-direction:column;gap:10px}
+      .lwr-copy-host{font-size:12px;font-weight:510;color:var(--dsw-alias-label-secondary);margin:2px 2px 4px}
+      .lwr-copy-item{display:grid;grid-template-columns:16px 1fr;column-gap:10px;align-items:center;width:100%;padding:8px 10px;border:1px solid transparent;border-radius:10px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;text-align:left;cursor:pointer}
+      .lwr-copy-item:hover{background:var(--dsw-alias-interactive-bg-hover)}
+      .lwr-copy-item[aria-checked=true]{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l2)}
+      .lwr-copy-item[aria-checked=true] .lwr-radio::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--dsw-alias-brand-primary)}
+      .lwr-copy-item:disabled{opacity:.55;cursor:default}
+      .lwr-copy-item .lwr-radio{grid-row:span 2}
+      .lwr-copy-name{font-size:13px;line-height:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .lwr-copy-current{margin-left:6px;font-size:11px;color:var(--dsw-alias-label-tertiary, #9ca3af)}
+      .lwr-copy-path{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+      .lwr-copy-error{margin-top:10px;padding:8px 10px;border-radius:8px;background:rgba(239,68,68,.1);color:#dc2626;font-size:12px;line-height:18px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:120px;overflow:auto}
+      .lwr-copy-tools{display:flex;align-items:center;gap:12px;margin-top:10px;font-size:12px}
+      .lwr-copy-link{border:0;background:none;padding:0;color:var(--dsw-alias-brand-primary);font:inherit;cursor:pointer}
+      .lwr-copy-link:disabled{opacity:.55;cursor:default}
+      .lwr-copy-count{margin-left:auto;color:var(--dsw-alias-label-secondary)}
+      .lwr-copy-files{gap:2px;max-height:300px}
+      .lwr-copy-file{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;font-size:12px;line-height:18px;cursor:pointer}
+      .lwr-copy-file:hover{background:var(--dsw-alias-interactive-bg-hover)}
+      .lwr-copy-file-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+      .lwr-copy-file-name[data-external]{direction:rtl;text-align:left}
+      .lwr-copy-file-name[data-external] bdi{direction:ltr;unicode-bidi:isolate}
+      .lwr-copy-exists{flex:none;font-size:11px;color:#b45309}
+      .lwr-copy-size{flex:none;font-size:11px;color:var(--dsw-alias-label-secondary)}
+      .lwr-copy-overwrite{display:flex;align-items:flex-start;gap:8px;margin-top:10px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary)}
+      .lwr-copy-skipped{margin-top:10px;font-size:12px;color:var(--dsw-alias-label-secondary)}
+      .lwr-copy-skipped summary{cursor:pointer}
+      .lwr-copy-skipped-list{margin-top:6px;max-height:160px;overflow:auto;padding:6px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px}
+      .lwr-copy-skipped-row{display:flex;gap:8px;align-items:baseline;width:max-content;min-width:100%;font-size:11px;line-height:18px;white-space:nowrap}
+      .lwr-copy-skipped-reason{flex:none;color:#b45309}
+      .lwr-copy-skipped-path{flex:none;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
       .lwr-field{margin-top:14px;display:flex;flex-direction:column;gap:6px}
       .lwr-field label{font-size:12px;color:var(--dsw-alias-label-secondary)}
       .lwr-select{height:30px;padding:0 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px}
@@ -1337,6 +1427,254 @@ window.__ModuleLoader__.load({
       const register = (name) => ctx.slots.inject(name, () => ctx.slots.register({ name, priority: -1 }, AddWorkspaceFlow));
       register('sidebar.workspaces.directoryFlow');
       register('conversation.hero.workspace.directoryFlow');
+
+      // ---- Copy a session into another workspace (this or another host). ----
+      // A row in the session menu opens a list of workspaces grouped by host;
+      // the Host copies the history there and the new session opens.
+
+      const copyRequest = (() => {
+        let value = null;
+        const listeners = new Set();
+        return {
+          set(next) {
+            value = next;
+            for (const listener of listeners) listener();
+          },
+          subscribe(listener) {
+            listeners.add(listener);
+            return () => listeners.delete(listener);
+          },
+          get: () => value,
+        };
+      })();
+      const CopyIcon = primitives.IconCopyOutlineRegular;
+      const MenuItemButton = primitives.MenuItemButton;
+
+      /** Display host of a workspace: `null` for Windows, else its WSL/SSH host id. */
+      const workspaceHost = (item, hosts) => wslInfo(item, hosts)?.distro ?? null;
+      /** Last segment of a Windows or Linux path. */
+      const baseName = (path) => String(path ?? '').replaceAll('\\', '/').split('/').filter(Boolean).at(-1) ?? '';
+
+      function CopySessionMenuItem({ sessionId, displayTitle, useMenuOpenState }) {
+        const tr = useT();
+        const [, setMenuOpen] = useMenuOpenState();
+        if (MenuItemButton === undefined) return null;
+        return h(MenuItemButton, {
+          icon: CopyIcon ? h(CopyIcon, {}) : undefined,
+          onSelect: () => {
+            setMenuOpen(false);
+            copyRequest.set({ sessionId, title: displayTitle });
+          },
+        }, tr('copy.menu'));
+      }
+
+      /**
+       * The dialog is rendered by a row action (always mounted in each session
+       * row, unlike the menu, which unmounts when it closes); only the row
+       * whose session is being copied renders it, through the app's own React
+       * tree and theme.
+       */
+      function CopySessionHost({ sessionId }) {
+        const request = React.useSyncExternalStore(copyRequest.subscribe, copyRequest.get, copyRequest.get);
+        if (request === null || request.sessionId !== sessionId) return null;
+        return h(CopySessionDialog);
+      }
+
+      function CopySessionDialog() {
+        const tr = useT();
+        const request = React.useSyncExternalStore(copyRequest.subscribe, copyRequest.get, copyRequest.get);
+        const { distros: hostList } = useDistros();
+        const [target, setTarget] = React.useState(null);
+        const [busy, setBusy] = React.useState(false);
+        const [error, setError] = React.useState(null);
+        // Step 2: the workspace files this session changed.
+        const [stage, setStage] = React.useState('target');
+        const [plan, setPlan] = React.useState(null);
+        const [chosen, setChosen] = React.useState(() => new Set());
+        const [overwrite, setOverwrite] = React.useState(false);
+        const workspaceList = ctx.get('workspaces')?.list;
+        const subscribe = React.useCallback((listener) => workspaceList?.subscribe?.(listener) ?? (() => {}), [workspaceList]);
+        const snapshot = React.useCallback(() => workspaceList?.getSnapshot?.(), [workspaceList]);
+        const state = React.useSyncExternalStore(subscribe, snapshot, snapshot);
+        React.useEffect(() => {
+          setTarget(null);
+          setError(null);
+          setBusy(false);
+          setStage('target');
+          setPlan(null);
+          setChosen(new Set());
+          setOverwrite(false);
+          if (request !== null) distros.refresh();
+        }, [request?.sessionId]);
+        if (request === null) return null;
+        const hosts = distros.getSnapshot().workspaces;
+        const items = state?.items ?? [];
+        const sourceWorkspace = items.find((item) => item.sessionIds.includes(request.sessionId));
+        // Group by host: Windows first, then each WSL/SSH host in name order.
+        const groups = new Map();
+        for (const item of items) {
+          const host = workspaceHost(item, hosts);
+          if (!groups.has(host)) groups.set(host, []);
+          groups.get(host).push(item);
+        }
+        const order = [...groups.keys()].sort((a, b) => (a === null ? -1 : b === null ? 1 : a.localeCompare(b)));
+        const hostHeading = (host) => {
+          if (host === null) return 'Windows';
+          const entry = hostList.find((item) => item.name.toLowerCase() === host.toLowerCase());
+          const os = osLabelOf(entry?.os);
+          const state = entry?.state === 'connected' ? '' : ` · ${tr(`state.${entry?.state ?? 'disconnected'}`)}`;
+          return `${hostTitle(host)}${os ? ` · ${os}` : ''}${state}`;
+        };
+        const targetItem = items.find((item) => item.workspaceId === target);
+        const close = () => {
+          if (!busy) copyRequest.set(null);
+        };
+        const next = async () => {
+          if (target === null) return;
+          setBusy(true);
+          setError(null);
+          try {
+            const value = await call('api/local-wsl-remote/sessions/copy-plan', {
+              method: 'POST',
+              body: JSON.stringify({ sessionId: request.sessionId, workspaceId: target }),
+            });
+            const existing = new Set(value.existing ?? []);
+            setPlan(value);
+            // Files the target does not have yet are chosen; existing ones wait for an explicit pick.
+            setChosen(new Set(value.files.filter((file) => !existing.has(file.relative) && !(file.external ? value.sameHost : value.sameFolder)).map((file) => file.relative)));
+            setStage('files');
+          } catch (failure) {
+            setError(failure.message);
+          } finally {
+            setBusy(false);
+          }
+        };
+        const submit = async () => {
+          if (target === null) return;
+          setBusy(true);
+          setError(null);
+          try {
+            const created = await call('api/local-wsl-remote/sessions/copy', {
+              method: 'POST',
+              body: JSON.stringify({ sessionId: request.sessionId, workspaceId: target, files: [...chosen], overwrite }),
+            });
+            copyRequest.set(null);
+            distros.refresh();
+            // The new session shows up through the merged lists; open it once it is known.
+            const uiWorkspace = ctx.get('uiWorkspace');
+            const sessions = ctx.get('sessions');
+            await sessions?.refreshProjections?.(created.sessionId).catch?.(() => {});
+            uiWorkspace?.openSession?.(created.sessionId);
+          } catch (failure) {
+            setError(failure.message);
+            setBusy(false);
+          }
+        };
+        const toggle = (relative) => setChosen((current) => {
+          const out = new Set(current);
+          if (out.has(relative)) out.delete(relative);
+          else out.add(relative);
+          return out;
+        });
+        const size = (bytes) => (bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`);
+
+        const filesStep = () => {
+          const existing = new Set(plan.existing ?? []);
+          // Workspace files are already in place when the target is the same folder;
+          // external files are already at their original path when it is the same host.
+          const offered = plan.files.filter((file) => !(file.external ? plan.sameHost : plan.sameFolder));
+          const all = offered.map((file) => file.relative);
+          const pickedExisting = [...chosen].filter((relative) => existing.has(relative)).length;
+          const inside = offered.filter((file) => !file.external);
+          const outside = offered.filter((file) => file.external);
+          const row = (file) => h('label', { key: file.relative, className: 'lwr-copy-file' },
+            h('input', { type: 'checkbox', checked: chosen.has(file.relative), disabled: busy, onChange: () => toggle(file.relative) }),
+            // An outside path is cut at its start, so the file name stays visible; the tooltip has the whole path.
+            file.external
+              ? h('span', { className: 'lwr-copy-file-name', 'data-external': '', title: `${file.path} → ${file.relative}` }, h('bdi', null, file.path))
+              : h('span', { className: 'lwr-copy-file-name', title: file.path }, file.relative),
+            existing.has(file.relative) && h('span', { className: 'lwr-copy-exists' }, tr('copy.files.exists')),
+            h('span', { className: 'lwr-copy-size' }, size(file.bytes)));
+          return h(React.Fragment, null,
+            h('div', { className: 'lwr-copy-hint' }, offered.length === 0
+              ? (plan.files.length > 0 ? tr('copy.files.sameFolder') : tr('copy.files.none'))
+              : tr('copy.files.hint', { from: plan.root ?? '', to: plan.targetRoot ?? targetItem?.path ?? '' })),
+            offered.length > 0 && h('div', { className: 'lwr-copy-tools' },
+              h('button', { type: 'button', className: 'lwr-copy-link', disabled: busy, onClick: () => setChosen(new Set(all)) }, tr('copy.files.all')),
+              h('button', { type: 'button', className: 'lwr-copy-link', disabled: busy, onClick: () => setChosen(new Set()) }, tr('copy.files.noneSelected')),
+              h('span', { className: 'lwr-copy-count' }, tr('copy.files.count', { chosen: chosen.size, total: all.length }))),
+            offered.length > 0 && h('div', { className: 'lwr-copy-list lwr-copy-files' },
+              inside.length > 0 && outside.length > 0 && h('div', { className: 'lwr-copy-host' }, tr('copy.files.inside')),
+              inside.map(row),
+              outside.length > 0 && h('div', { className: 'lwr-copy-host' }, tr('copy.files.outside', { dir: '.dsh-external' })),
+              outside.map(row)),
+            chosen.size > 20 && h('div', { className: 'lwr-copy-hint' }, tr('copy.files.zip', { count: chosen.size })),
+            pickedExisting > 0 && h('label', { className: 'lwr-copy-overwrite' },
+              h('input', { type: 'checkbox', checked: overwrite, disabled: busy, onChange: () => setOverwrite(!overwrite) }),
+              tr('copy.files.overwrite', { count: pickedExisting })),
+            plan.skipped?.length > 0 && h('details', { className: 'lwr-copy-skipped' },
+              h('summary', null, tr('copy.files.skipped', { count: plan.skipped.length })),
+              // Reason first, then the full path; the box scrolls both ways so a long path is never cut off.
+              h('div', { className: 'lwr-copy-skipped-list' },
+                plan.skipped.map((entry) => h('div', { key: entry.path, className: 'lwr-copy-skipped-row' },
+                  h('span', { className: 'lwr-copy-skipped-reason' }, `${tr(`copy.skip.${entry.reason}`)}${entry.bytes ? ` (${size(entry.bytes)})` : ''}`),
+                  h('span', { className: 'lwr-copy-skipped-path' }, entry.path))))));
+        };
+        if (stage === 'files' && plan !== null) {
+          return h(Modal, {
+            open: true,
+            onClose: close,
+            title: tr('copy.files.title', { workspace: targetItem?.title || baseName(targetItem?.path) }),
+            closeLabel: tr('ws.cancel'),
+            footer: h(React.Fragment, null,
+              h(Button, { variant: 'outline', disabled: busy, onClick: () => { setStage('target'); setError(null); } }, tr('copy.back')),
+              h(Button, { variant: 'primary', disabled: busy, onClick: submit }, busy ? tr('copy.busy') : chosen.size > 0 ? tr('copy.submitFiles', { count: chosen.size }) : tr('copy.submit'))),
+          },
+          filesStep(),
+          error && h('div', { className: 'lwr-copy-error', role: 'alert' }, error));
+        }
+        return h(Modal, {
+          open: true,
+          onClose: close,
+          title: tr('copy.title'),
+          closeLabel: tr('ws.cancel'),
+          footer: h(React.Fragment, null,
+            h(Button, { variant: 'outline', disabled: busy, onClick: close }, tr('ws.cancel')),
+            h(Button, { variant: 'primary', disabled: busy || target === null, onClick: next }, busy ? tr('copy.loading') : tr('ws.next'))),
+        },
+        h('div', { className: 'lwr-copy-hint' }, tr('copy.hint', { title: request.title || tr('copy.untitled') })),
+        h('div', { className: 'lwr-copy-list', role: 'radiogroup', 'aria-label': tr('copy.target') },
+          order.map((host) => h('div', { key: host ?? 'windows', className: 'lwr-copy-group' },
+            h('div', { className: 'lwr-copy-host' }, hostHeading(host)),
+            groups.get(host).map((item) => {
+              const current = item.workspaceId === sourceWorkspace?.workspaceId;
+              const name = item.title || String(item.path).split(/[\\\\/]/).filter(Boolean).at(-1) || item.path;
+              return h('button', {
+                key: item.workspaceId,
+                type: 'button',
+                role: 'radio',
+                className: 'lwr-copy-item',
+                'aria-checked': target === item.workspaceId,
+                disabled: busy,
+                onClick: () => setTarget(item.workspaceId),
+              },
+              h('span', { className: 'lwr-radio', 'aria-hidden': true }),
+              h('span', { className: 'lwr-copy-name' }, name, current ? h('span', { className: 'lwr-copy-current' }, tr('copy.current')) : null),
+              h('span', { className: 'lwr-copy-path' }, item.path));
+            })))),
+        error && h('div', { className: 'lwr-copy-error', role: 'alert' }, error));
+      }
+
+      ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
+        name: 'sidebar.workspaces.session.menu.item',
+        id: 'local-wsl-remote-copy',
+        order: 310,
+      }, CopySessionMenuItem));
+      ctx.slots.inject('sidebar.workspaces.session.row.action', () => ctx.slots.register({
+        name: 'sidebar.workspaces.session.row.action',
+        id: 'local-wsl-remote-copy-dialog',
+        order: 10000,
+      }, CopySessionHost));
 
       // ---- Sidebar badge: "WSL · Ubuntu 26.04" right of a WSL workspace name. ----
       // The workspace row has no slot for decorations, so the badge is placed in

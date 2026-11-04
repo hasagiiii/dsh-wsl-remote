@@ -28,7 +28,7 @@ const status = await service.status();
 console.log(JSON.stringify(status, null, 2));
 assert.equal(status.shareLogin, true);
 assert.ok(Array.isArray(status.distros));
-assert.deepEqual([...routes.keys()].sort(), ['connect', 'connections', 'disconnect', 'open', 'settings', 'linux/list', 'linux/mkdir', 'distros', 'model-catalog', 'models/rpc', 'models/preview', 'models/apply', 'models/provider-plugin', 'models/install-provider', 'session-holder', 'plugins', 'plugins/change', 'plugins/install', 'plugins/install-status', 'plugins/install-cancel', 'restart', 'open-requests', 'open-requests/claim', 'ssh/add', 'ssh/remove', 'plugins/sync-plan', 'plugins/sync', 'plugins/sync-status', 'plugins/sync-cancel'].map((p) => `/api/local-wsl-remote/${p}`).sort());
+assert.deepEqual([...routes.keys()].sort(), ['connect', 'connections', 'disconnect', 'open', 'settings', 'linux/list', 'linux/mkdir', 'distros', 'model-catalog', 'models/rpc', 'models/preview', 'models/apply', 'models/provider-plugin', 'models/install-provider', 'session-holder', 'plugins', 'plugins/change', 'plugins/install', 'plugins/install-status', 'plugins/install-cancel', 'restart', 'open-requests', 'open-requests/claim', 'ssh/add', 'ssh/remove', 'plugins/sync-plan', 'plugins/sync', 'plugins/sync-status', 'plugins/sync-cancel', 'sessions/copy', 'sessions/copy-plan'].map((p) => `/api/local-wsl-remote/${p}`).sort());
 assert.equal(tools[0].name, 'wsl_remote_connections');
 const bad = await routes.get('/api/local-wsl-remote/connect').fetch(new Request('http://x/', { method: 'POST', body: JSON.stringify({ distro: 'no such distro' }) }));
 assert.equal(bad.status, 400);

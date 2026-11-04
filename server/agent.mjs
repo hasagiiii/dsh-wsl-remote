@@ -10,7 +10,8 @@
  *   channel n  -> one TCP connection from the Windows loopback relay to this
  *                 process's loopback web listener.
  * Nothing listens on a non-loopback address, and nothing here needs a package
- * import, because this file is loaded by absolute path outside any profile.
+ * import, because this file is loaded by absolute path outside any profile
+ * (session-copy.mjs, deployed beside it, likewise uses only `ctx` services).
  *
  * Credential sharing (optional, chosen on Windows): `ctx.credentials` keeps
  * its local provider, but every read and write is answered by the Windows
@@ -19,13 +20,14 @@
  */
 import { Socket, createConnection } from 'node:net';
 import { FRAME, Mux } from './mux.js';
+import { existingInWorkspace, exportSession, importSession, planSessionFiles } from './session-copy.mjs';
 
 export const name = 'wsl-remote-agent';
 
 /** Records that stay in this distribution: its own browser-cookie secret. */
 const LOCAL_ONLY = /^client-connection\//;
-/** 2: answers `resolve-credential` for model sync. */
-const AGENT_PROTOCOL = 2;
+/** 2: answers `resolve-credential` for model sync. 3: `session-export` / `session-import` for session copy. 4: session copy carries workspace files (`session-files`, `workspace-existing`). */
+const AGENT_PROTOCOL = 4;
 
 const log = (message) => process.stderr.write(`[wsl-remote agent] ${message}\n`);
 
@@ -130,6 +132,21 @@ export function serve(ctx, input, output, options) {
     }
     if (message.method === 'record-updated' && shared !== undefined) shared.notifyRecordUpdated?.(message.params.key);
     if (message.method === 'reference-updated' && shared !== undefined) shared.notifyUpdated?.(message.params.ref);
+    // Session copy between workspaces and hosts: the Windows Host reads a
+    // session here, or creates its copy here, with this dsh's own services.
+    const copyMethods = {
+      'session-export': (params) => exportSession(ctx, String(params.sessionId), params.options ?? {}),
+      'session-import': (params) => importSession(ctx, params.copy, params.target ?? {}),
+      'session-files': (params) => planSessionFiles(ctx, String(params.sessionId)),
+      'workspace-existing': (params) => existingInWorkspace(ctx, String(params.workspaceId), Array.isArray(params.relatives) ? params.relatives : []),
+    };
+    if (Object.hasOwn(copyMethods, message.method)) {
+      try {
+        send({ id: message.id, result: await copyMethods[message.method](message.params ?? {}) });
+      } catch (error) {
+        send({ id: message.id, error: error?.message ?? String(error) });
+      }
+    }
   }
 
   function openTcp(channel, payload) {
