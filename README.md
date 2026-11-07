@@ -73,7 +73,7 @@ Install your own `dsh` on every remote host you want to connect:
 
 ```bash
 npm i -g @deepseek-ai/dsh
-bash -lc 'dsh --version'   # must be the same release as DeepSeek Harness on Windows (0.2.1-rc.5)
+bash -lc 'dsh --version'   # 0.2.1-rc.5 or newer; this plugin runs on DeepSeek Harness 0.2.1-rc.5 through 0.2.2
 ```
 
 When dsh is missing or too old, the Settings page shows the install commands to copy; see below.

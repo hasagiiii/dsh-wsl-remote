@@ -73,7 +73,7 @@
 
 ```bash
 npm i -g @deepseek-ai/dsh
-bash -lc 'dsh --version'   # 必须与 Windows 上的 DeepSeek Harness 是同一版本（0.2.1-rc.5）
+bash -lc 'dsh --version'   # 需要 0.2.1-rc.5 或更高；本插件支持 DeepSeek Harness 0.2.1-rc.5 到 0.2.2
 ```
 
 缺少 dsh 或版本过低时，设置页会列出可以复制的安装命令，见下文。
