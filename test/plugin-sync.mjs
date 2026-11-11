@@ -101,6 +101,7 @@ test('an update on a DSH 0.2.1 target (no updateBundle) removes, installs, and k
   assert.equal(failed.status, 'failed');
   assert.match(failed.items[0].error, /ERR_PNPM_META_FETCH_FAIL/, 'the reason is shown');
   assert.match(failed.items[0].error, /2\.2\.2 was installed again/);
+  for (const piece of failed.items[0].error.split(' — ')) assert.equal(failed.items[0].error.split(piece).length - 1, 1, `"${piece}" appears once`);
   assert.equal(failing.installed.get('dsh-plugin'), '2.2.2', 'the plugin is not lost');
 });
 
