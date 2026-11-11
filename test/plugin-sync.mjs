@@ -6,7 +6,15 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
 import { PluginSyncRuns, mapPluginSpec, planPluginSync, platformOf } from '../lib/plugin-sync.js';
-import { PluginInstalls, installFailureReason } from '../lib/installs.js';
+import { PluginInstalls, installFailureReason, missingMethod } from '../lib/installs.js';
+
+test('a target without a Remote method is recognized, other failures are not', () => {
+  assert.equal(missingMethod({ code: 'gateway/internal', message: 'WSL dsh: transport failure for /api/pluginManager/updateBundle: HTTP 404' }), true, 'DSH 0.2.1 over HTTP');
+  assert.equal(missingMethod({ code: 'gateway/invocation-unavailable', message: 'no active Remote method exports this endpoint' }), true);
+  assert.equal(missingMethod({ code: 'gateway/internal', message: 'WSL dsh: transport failure for /api/pluginManager/updateBundle: HTTP 500' }), false, 'a server error is a real failure');
+  assert.equal(missingMethod({ code: 'gateway/internal', message: 'WSL dsh: fetch failed' }), false);
+  assert.equal(missingMethod(undefined), false);
+});
 
 /**
  * A target dsh whose plugin manager behaves like the real one for an installed
@@ -23,8 +31,9 @@ function updateTarget({ hasUpdate, installFails = false }) {
       call: async (endpoint, { args }) => {
         calls.push([endpoint, args.spec ?? args.name]);
         if (endpoint === 'pluginManager/updateBundle') {
-          // What DSH 0.2.1's gateway answers for an endpoint no Remote method exports.
-          if (!hasUpdate) return { ok: false, error: { code: 'gateway/invocation-unavailable', message: 'no active Remote method exports this endpoint', details: {} } };
+          // What DSH 0.2.1 answers for an endpoint it does not know: its gateway does not
+          // claim the path, the web server answers 404, and the client reports that.
+          if (!hasUpdate) return { ok: false, error: { code: 'gateway/internal', message: 'WSL dsh: transport failure for /api/pluginManager/updateBundle: HTTP 404', details: {} } };
           installed.set(args.name, args.version);
           return { ok: true, value: { from: '2.2.2', to: args.version, step: 'install', result: { application: 'applied', changed: true } } };
         }
