@@ -166,6 +166,35 @@ test('Add workspace: the SSH card picks an SSH host and the picker hands back an
   assert.deepEqual(picked, ['ssh://me@dev/home/me']);
 });
 
+test('Plugin sync panel: a failed plugin shows why, and an update names its version', async () => {
+  const run = {
+    id: 'run-f', source: null, target: 'ssh:me@dev', status: 'failed', elapsedMs: 1000,
+    items: [
+      { name: 'dsh-plugin', action: 'update', version: '2.2.5', status: 'failed', error: '[ERR_PNPM_META_FETCH_FAIL] GET https://registry.npmjs.org/dsh-plugin: fetch failed' },
+      { name: 'other', action: 'install', version: '1.0.0', status: 'failed' },
+    ],
+  };
+  const hosts = { ...status, distros: [{ name: 'ssh:me@dev', state: 'connected' }] };
+  const f = load((path) => {
+    if (path.endsWith('/sync-status')) return { run: { ...run, status: 'running' } };
+    if (path.endsWith('/sync-plan')) return { source: null, target: 'ssh:me@dev', targetOnly: [], rows: [] };
+    if (path.endsWith('/plugins')) return { distro: 'ssh:me@dev', plugins: [], windowsOnly: [] };
+    return hosts;
+  }, { setTimeout: (fn) => { fn(); return 1; } });
+  const element = f.React.createElement(f.registered.get('wsl-plugins'), {});
+  await f.render(element);
+  await f.flush();
+  let tree = await f.render(element);
+  // The picked-up run then reports its end.
+  for (let round = 0; round < 3; round++) { await f.flush(); tree = await f.render(element); }
+  const line = f.all(tree).find((node) => node.props?.['data-lwr-sync-item'] === 'dsh-plugin');
+  assert.ok(line, 'the run lists the plugin');
+  const reason = f.all(tree).find((node) => node.props?.['data-lwr-sync-error'] === 'dsh-plugin');
+  assert.match(f.text(reason), /sync\.reasonLabel.*ERR_PNPM_META_FETCH_FAIL/, 'the reason is shown under the plugin');
+  const none = f.all(tree).find((node) => node.props?.['data-lwr-sync-error'] === 'other');
+  assert.match(f.text(none), /sync\.reasonUnknown/, 'never an empty reason');
+});
+
 test('Plugin sync panel: compare two hosts, sync the selected plugins, show the run', async () => {
   const plan = {
     source: null, target: 'ssh:me@dev', targetOnly: [{ name: 'only-there' }],

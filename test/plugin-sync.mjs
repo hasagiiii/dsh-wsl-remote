@@ -6,7 +6,94 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
 import { PluginSyncRuns, mapPluginSpec, planPluginSync, platformOf } from '../lib/plugin-sync.js';
-import { PluginInstalls } from '../lib/installs.js';
+import { PluginInstalls, installFailureReason } from '../lib/installs.js';
+
+/**
+ * A target dsh whose plugin manager behaves like the real one for an installed
+ * package: a plain install of it is refused as "already-installed" with no
+ * message (DSH 0.2.1 and 0.2.2); `updateBundle` exists only on 0.2.2.
+ */
+function updateTarget({ hasUpdate, installFails = false }) {
+  const calls = [];
+  const installed = new Map([['dsh-plugin', '2.2.2']]);
+  const events = new EventEmitter();
+  const installs = new PluginInstalls({
+    events,
+    client: async () => ({
+      call: async (endpoint, { args }) => {
+        calls.push([endpoint, args.spec ?? args.name]);
+        if (endpoint === 'pluginManager/updateBundle') {
+          // What DSH 0.2.1's gateway answers for an endpoint no Remote method exports.
+          if (!hasUpdate) return { ok: false, error: { code: 'gateway/invocation-unavailable', message: 'no active Remote method exports this endpoint', details: {} } };
+          installed.set(args.name, args.version);
+          return { ok: true, value: { from: '2.2.2', to: args.version, step: 'install', result: { application: 'applied', changed: true } } };
+        }
+        if (endpoint === 'pluginManager/removeBundle') {
+          installed.delete(args.name);
+          return { ok: true, value: { application: 'applied', changed: true } };
+        }
+        if (endpoint === 'pluginManager/installBundle') {
+          const [name, version] = args.spec.split(/@(?=[^@]*$)/);
+          if (installed.has(name)) return { ok: true, value: { stage: 'install', target: args.spec, application: 'failed', changed: false, error: { code: 'already-installed' } } };
+          if (installFails && version !== '2.2.2') return { ok: true, value: { application: 'failed', changed: false, error: { code: 'operation-error', diagnostic: '[ERR_PNPM_META_FETCH_FAIL] GET https://registry.npmjs.org/dsh-plugin: fetch failed' } } };
+          installed.set(name, version);
+          return { ok: true, value: { application: 'applied', changed: true } };
+        }
+        return { ok: true, value: {} };
+      },
+    }),
+  });
+  const runs = new PluginSyncRuns({
+    list: async (host) => (host === null
+      ? [{ name: 'dsh-plugin', availability: 'profile', installed: true, version: '2.2.5', enabled: true, source: 'dsh-plugin@^2.2.5' }]
+      : [{ name: 'dsh-plugin', availability: 'profile', installed: true, version: installed.get('dsh-plugin') ?? null, enabled: true, source: 'dsh-plugin@^2.2.2' }].filter((bundle) => bundle.version)),
+    enable: async () => ({}),
+    installs,
+  });
+  const done = async (id) => {
+    for (let i = 0; i < 20 && runs.get(id).status === 'running'; i++) await new Promise((resolve) => setImmediate(resolve));
+    return runs.get(id);
+  };
+  return { runs, calls, installed, done };
+}
+
+test('failure reasons are never empty: codes get words, pnpm errors are picked out', () => {
+  assert.match(installFailureReason({ result: { application: 'failed', error: { code: 'already-installed' } } }), /already installed.*\(already-installed\)/);
+  assert.match(installFailureReason({ result: { status: 'refused', problem: 'not-a-bundle', reason: 'x declares no dsh.bundle' } }), /declares no dsh\.bundle/);
+  assert.match(installFailureReason({ result: { application: 'failed', error: { code: 'incompatible-version', incompatible: [{ name: 'p', version: '1.0.0', requirements: { 'engines.dsh': '<0.2.2-0' }, runtimeVersion: '0.2.2-rc.1' }] } } }), /p@1\.0\.0 needs .*engines\.dsh.*0\.2\.2-rc\.1/);
+  const log = ['Progress: resolved 1', '[WARN] GET https://registry.npmjs.org/x error (EAI_AGAIN). Will retry', '[ERR_PNPM_META_FETCH_FAIL] GET https://registry.npmjs.org/x: fetch failed', 'Progress: done'];
+  assert.match(installFailureReason({ result: { application: 'failed', error: { code: 'operation-error', diagnostic: `${log.join('\n')}\n${'x'.repeat(500)}` } } }), /ERR_PNPM_META_FETCH_FAIL/);
+  assert.match(installFailureReason({ lines: log }), /ERR_PNPM_META_FETCH_FAIL/, 'from the streamed output when the result says nothing');
+  assert.match(installFailureReason({ result: { application: 'failed' } }), /no message/);
+  assert.notEqual(installFailureReason({}), '');
+});
+
+test('an update on a DSH 0.2.2 target goes through its own updateBundle', async () => {
+  const { runs, calls, installed, done } = updateTarget({ hasUpdate: true });
+  const run = await runs.start(null, 'Ubuntu-26.04', ['dsh-plugin']);
+  assert.deepEqual(run.items.map((item) => [item.action, item.version]), [['update', '2.2.5']], 'the version is shown with the action');
+  const finished = await done(run.id);
+  assert.equal(finished.status, 'done', JSON.stringify(finished.items));
+  assert.deepEqual(calls.map((call) => call[0]), ['pluginManager/updateBundle']);
+  assert.equal(installed.get('dsh-plugin'), '2.2.5');
+});
+
+test('an update on a DSH 0.2.1 target (no updateBundle) removes, installs, and keeps the old version if that fails', async () => {
+  const ok = updateTarget({ hasUpdate: false });
+  const run = await ok.runs.start(null, 'Ubuntu-26.04', ['dsh-plugin']);
+  const finished = await ok.done(run.id);
+  assert.equal(finished.status, 'done', JSON.stringify(finished.items));
+  assert.deepEqual(ok.calls.map((call) => call[0]), ['pluginManager/updateBundle', 'pluginManager/removeBundle', 'pluginManager/installBundle']);
+  assert.equal(ok.installed.get('dsh-plugin'), '2.2.5');
+
+  const failing = updateTarget({ hasUpdate: false, installFails: true });
+  const second = await failing.runs.start(null, 'Ubuntu-26.04', ['dsh-plugin']);
+  const failed = await failing.done(second.id);
+  assert.equal(failed.status, 'failed');
+  assert.match(failed.items[0].error, /ERR_PNPM_META_FETCH_FAIL/, 'the reason is shown');
+  assert.match(failed.items[0].error, /2\.2\.2 was installed again/);
+  assert.equal(failing.installed.get('dsh-plugin'), '2.2.2', 'the plugin is not lost');
+});
 
 test('platforms of host ids', () => {
   assert.equal(platformOf(null), 'windows');
