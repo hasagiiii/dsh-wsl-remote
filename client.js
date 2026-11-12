@@ -55,6 +55,7 @@ window.__ModuleLoader__.load({
         'none': '未检测到可用的 WSL 2 发行版。',
         'discoveryError': '检测 WSL 发行版失败，正在自动重试：{message}',
         'notWindows': '仅在 Windows 上可用。',
+        'residentHere': '这个 dsh 运行在 Linux 上，已安装本插件：Windows 上的 DeepSeek Harness 连接这台主机时，会直接连到这个正在运行的 dsh（通过只有当前用户可访问的本地 socket），不再另起一个；两边的工作区和会话是同一份。',
         'default': '默认',
         'state.disconnected': '未连接',
         'state.connecting': '连接中…',
@@ -68,6 +69,7 @@ window.__ModuleLoader__.load({
         'version': 'dsh {version}',
         'shared': '共享登录',
         'separate': '独立登录',
+        'attached': '已连接到正在运行的 dsh',
         'requirement': '需要在发行版中安装 dsh {version} 或更高版本：npm install -g @deepseek-ai/dsh',
         'share.title': '共享登录状态',
         'share.description': '开启后，WSL 中的 dsh 直接使用本机 Windows 的凭据存储：DeepSeek 账号登录、API Key 和令牌刷新只需在一处完成（刷新在 Windows 的文件锁下进行，不会互相作废）。关闭后两边各自登录。修改后对新连接生效。',
@@ -309,6 +311,7 @@ window.__ModuleLoader__.load({
         'none': 'No WSL 2 distribution found.',
         'discoveryError': 'Could not list WSL distributions; retrying automatically: {message}',
         'notWindows': 'Available on Windows only.',
+        'residentHere': 'This dsh runs on Linux with this plugin installed: when DeepSeek Harness on Windows connects to this host, it joins this running dsh (through a local socket only this user can reach) instead of starting another, so both sides share one set of workspaces and sessions.',
         'default': 'default',
         'state.disconnected': 'Not connected',
         'state.connecting': 'Connecting…',
@@ -322,6 +325,7 @@ window.__ModuleLoader__.load({
         'version': 'dsh {version}',
         'shared': 'shared sign-in',
         'separate': 'separate sign-in',
+        'attached': 'joined its running dsh',
         'requirement': 'Requires dsh {version} or newer in the distribution: npm install -g @deepseek-ai/dsh',
         'share.title': 'Share sign-in',
         'share.description': 'When on, the dsh in WSL uses this Windows credential store directly: DeepSeek sign-in, API keys and token refreshes happen once (refreshes run under the Windows file lock, so neither side invalidates the other). When off, each side signs in on its own. Applies to new connections.',
@@ -1832,6 +1836,8 @@ window.__ModuleLoader__.load({
             try {
               const status = await call('api/local-wsl-remote/connections', { signal: abort.signal });
               if (abort.signal.aborted) return;
+              // A dsh on Linux with this plugin only hosts the resident agent: nothing to merge or reopen.
+              if (status.resident) return;
               if (status.bridgeReady) {
                 scope.connection.reconnect();
                 return;
@@ -2142,8 +2148,10 @@ window.__ModuleLoader__.load({
           };
           const details = [];
           if (host.dsh) details.push(tr('version', { version: host.dsh }));
+          // Joined a dsh that runs on its own there (this plugin installed in it) rather than one started for this window.
+          if (connected && host.attached) details.push(tr('attached'));
           if (connected && host.shareLogin !== undefined) details.push(tr(host.shareLogin ? 'shared' : 'separate'));
-          if (connected && host.profile) details.push(`profile ${host.profile}`);
+          if (connected && host.profile && !host.attached) details.push(`profile ${host.profile}`);
           return h('div', { className: 'lwr-host-wrap' }, h('div', { className: 'lwr-host' },
             h('span', { className: 'lwr-dot', 'data-state': host.state, 'aria-hidden': true }),
             h('div', { className: 'lwr-text' },
@@ -2215,7 +2223,14 @@ window.__ModuleLoader__.load({
           const tr = useT();
           const status = useStatus();
           const value = status.status === 'ready' ? status.value : undefined;
-          const wsl = value ? value.distros.filter((host) => !isSsh(host.name)) : [];
+          const wsl = value?.distros ? value.distros.filter((host) => !isSsh(host.name)) : [];
+          if (value?.resident) {
+            // This dsh runs on Linux with the plugin installed: it is a host Windows windows join.
+            return h('div', { className: 'lwr-block' },
+              h('style', null, css),
+              h('div', { className: 'lwr-title' }, tr('title')),
+              h('div', { className: 'lwr-desc' }, tr('residentHere')));
+          }
           return h(React.Fragment, null, h('div', { className: 'lwr-block' },
             h('style', null, css),
             h('div', { className: 'lwr-title' }, tr('title')),

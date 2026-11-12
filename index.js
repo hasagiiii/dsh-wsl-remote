@@ -38,6 +38,38 @@ import { createModelPluginService } from './lib/model-plugins.js';
 import { PluginSyncRuns } from './lib/plugin-sync.js';
 import { inspectGitSource } from './lib/git-source.js';
 import { createSessionCopier } from './lib/session-copy.js';
+import { serveResident } from './server/agent.mjs';
+
+/**
+ * Linux: run the resident agent for this dsh. Its web origin (the address the
+ * Windows relay forwards the UI and API to) is known once the web server
+ * listens, so the agent reads it per connection through `url()`.
+ */
+function startResidentAgent(ctx) {
+  let origin;
+  let launch;
+  ctx.inject(['webServer', 'connection'], (scope) => {
+    scope.effect(() => {
+      const read = () => {
+        try {
+          origin = scope.webServer.getOrigin();
+          launch = scope.connection.authenticatedUrl(`${origin}/`);
+        } catch {}
+      };
+      read();
+      const timer = setInterval(() => {
+        if (launch === undefined) read();
+        else clearInterval(timer);
+      }, 500);
+      timer.unref?.();
+      return () => clearInterval(timer);
+    }, 'wsl-remote: resident agent web address');
+  });
+  ctx.effect(() => {
+    const agent = serveResident(ctx, { url: () => launch });
+    return () => agent?.close();
+  }, 'wsl-remote: resident agent');
+}
 
 /** `git <args>` on Windows, bounded; never through a shell. */
 const windowsGit = (args) => new Promise((resolve) => {
@@ -93,6 +125,27 @@ export default class WslRemoteService extends Service {
   constructor(ctx, config) {
     super(ctx, 'wslRemote');
     this.config = config;
+    // Installed in a dsh on Linux (a WSL distribution or a server): no Windows
+    // Host here, only the agent a Windows window connects to, on this user's
+    // Unix socket, so it reaches this running dsh instead of starting another.
+    if (process.platform !== 'win32') {
+      this.resident = true;
+      this.settings = { sshHosts: [], autoConnect: [], workspaceOrder: [] };
+      this.connections = new Map();
+      this.distros = [];
+      // The window's client half polls this route; on Linux there is nothing to merge, so it
+      // answers "ready" at once (the client would otherwise keep polling a missing route).
+      ctx.inject(['connection'], (scope) => {
+        scope.effect(() => scope.connection.fetch.register({
+          path: `${ROUTE}/connections`,
+          methods: ['GET'],
+          requestBody: 'buffered',
+          fetch: async () => json({ platform: process.platform, resident: true, bridgeReady: false, distros: [] }),
+        }), 'wsl-remote: resident status route');
+      });
+      startResidentAgent(ctx);
+      return;
+    }
     const { settings, migrated } = loadSettings();
     this.settings = settings;
     this.migrated = migrated;

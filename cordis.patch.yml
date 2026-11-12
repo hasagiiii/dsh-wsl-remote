@@ -1,11 +1,13 @@
-# WSL for DeepSeek Harness (Codex-style). Install on the Windows Host only.
+# WSL for DeepSeek Harness (Codex-style). Install on the Windows Host; also in a
+# dsh that already runs on a Linux host on its own, so Windows joins it.
 #
 # `local-wsl-remote` is the whole plugin: WSL remote connections (each
 # distribution runs the user's own `dsh`), the merge of WSL workspaces and
 # sessions into this window, the WSL folder picker and `dsh-harness`.
 # Nothing of the shipped composition is replaced or disabled, so enabling or
 # disabling the plugin while DeepSeek Harness runs leaves every built-in
-# service in place. On any platform but Windows it stays idle.
+# service in place. On Linux it only runs the resident agent: a Unix socket
+# (mode 0600) a Windows window joins through wsl.exe or ssh.
 - insert:
     - id: local-wsl-remote
       name: '@local/dsh-wsl-remote'

@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Bring WSL and SSH remote hosts to DeepSeek Harness, the way the Codex desktop app supports them. **Install it once, on Windows.** Each WSL distribution and each SSH server is a remote host running your own `dsh`, installed with `npm i -g @deepseek-ai/dsh`, and its workspaces and sessions are merged into the Windows window.
+Bring WSL and SSH remote hosts to DeepSeek Harness, the way the Codex desktop app supports them. **Install it once, on Windows** (and, only if a host already runs a dsh of its own, there too: see [Joining a dsh that is already running](#joining-a-dsh-that-is-already-running)). Each WSL distribution and each SSH server is a remote host running your own `dsh`, installed with `npm i -g @deepseek-ai/dsh`, and its workspaces and sessions are merged into the Windows window.
 
 - **WSL workspaces**: choose "WSL" when adding a workspace and pick a folder in the Linux file system. Sessions in that workspace run in your own `dsh` inside WSL, with WSL's `~/.dsh` profile, models and plugins; commands, file edits and searches run in Linux under the sandbox you configured there. The session list, chat view, history, live output, questions and approvals are all in the same Windows window, beside the Windows sessions.
 - **SSH remote hosts**: used exactly like WSL. Add `user@host`, `host:port` or a `Host` from `~/.ssh/config` under Settings → General → **SSH remote hosts**; once connected, the workspaces and sessions of your own `dsh` on the server are merged into this window the same way, and "Add workspace" offers **SSH**. See [SSH remote hosts](#ssh-remote-hosts).
@@ -195,6 +195,24 @@ Differences from WSL:
 
 After removing an SSH host, only `~/.dsh-wsl-remote` remains on the server; remove it with `rm -rf ~/.dsh-wsl-remote`.
 
+### Joining a dsh that is already running
+
+By default, connecting **starts another** `dsh` on the WSL distribution or server and ends it on disconnect. If a dsh already runs there on its own (for example a `dsh web` service you publish), the two share one `~/.dsh` but each keeps its own workspace list: a workspace created from Windows shows as Ungrouped in that web UI, and the two can even overwrite each other's workspace records.
+
+The fix is to **install this plugin in that running dsh too**:
+
+1. Install the plugin in that host's dsh: with **Sync plugins** on Windows' Plugins → **WSL / SSH** page, with `dsh plugin --profile web add <this plugin's source>` on the host, or from that dsh's own Plugins page. Installing and enabling apply at once; that dsh **does not restart**.
+2. On Linux the plugin does one thing: it waits for Windows on a Unix socket only the current user can reach (`~/.dsh/wsl-remote/agent.sock`, mode 0600 in a 0700 folder). It opens no network port and goes through neither dsh's web entry nor any gate or proxy in front of it.
+3. From then on, connecting to the host from Windows checks that socket first: when a dsh answers, the window **joins it** and Settings shows "joined its running dsh"; otherwise a dsh is started as before.
+
+When joined to a running dsh:
+
+- The Windows window and that dsh's web UI use **the same process**: one set of workspaces and sessions, so a workspace created on either side is grouped correctly on both.
+- Disconnecting ends only the Windows side and **never stops that dsh**. Several Windows windows can join the same dsh one after another.
+- **Windows sign-in is not shared by default**: that dsh keeps its own models and credentials, so a public service's credentials are not rewritten. To share anyway, set `DSH_WSL_REMOTE_RESIDENT_SHARE_LOGIN=1` in the environment that starts that dsh.
+- When the two sides run different plugin versions, Windows checks the protocol and, if the plugin in that dsh is too old, asks you to update it first (for example by syncing it once from Windows' Plugins page).
+- Disabling or removing the plugin in that dsh removes the socket; the next connect starts a dsh again.
+
 ## How it works
 
 ```text
@@ -246,7 +264,7 @@ Results are remembered, so each id is resolved once. A workspace or session a di
 - `lib/bridge/host-client.js`: the WSL dsh client, assembled from DeepSeek Harness's own Client packages.
 - `lib/remote.js`: one remote connection (WSL or SSH): deploy, version gate, launch, loopback relay, credential answers, reconnect with backoff.
 - `lib/transport.js`: run a Linux argv on a remote host: `wsl.exe -d` for WSL, `ssh -T -o BatchMode=yes` for SSH (each argument single-quoted); `~/.ssh/config` parsing.
-- `server/launch.sh`, `server/agent.mjs`: start `dsh` through the login shell; the agent is a Cordis plugin loaded with `dsh --patch` that runs only when the Windows Host started it. A marker line precedes the mux frames on the pipe, so an SSH login banner is discarded.
+- `server/launch.sh`, `server/agent.mjs`: start `dsh` through the login shell; the agent is a Cordis plugin loaded with `dsh --patch` that runs only when the Windows Host started it. A marker line precedes the mux frames on the pipe, so an SSH login banner is discarded. Installed in a dsh on Linux, `index.js` runs only the resident agent (`serveResident`, a Unix socket); `launch.sh attach` and `server/connect.mjs` join the stdio of `wsl.exe` / `ssh` to that socket, with the same protocol.
 - `server/dsh-harness.sh`, `lib/requests.js`: the `dsh-harness` command.
 - `server/session-copy.mjs`, `server/workspace-files.mjs`, `server/path-rewrite.mjs`, `lib/session-copy.js`: session copy. Both halves (read, create) use only dsh's own services (`sessionQuery`, the attachment store, `agents.create` with a seeded history, the way **Fork session** does) plus `node:fs` for the workspace files; `path-rewrite.mjs` points the copied history's paths at the target. The same files run in the Windows Host and, deployed with the agent, on a remote host through the pipe.
 - `lib/linux-fs.js`: the WSL / SSH folder picker, and the picker addresses (`\\wsl.localhost\…`, `ssh://<host>/…`) to and from a host and Linux path.

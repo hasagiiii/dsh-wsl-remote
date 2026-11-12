@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-让 DeepSeek Harness 像 Codex 桌面版一样支持 WSL 和 SSH 远程主机。**只需在 Windows 上安装一次。** 每个 WSL 发行版、每台 SSH 服务器都是一台远程主机，运行你自己用 `npm i -g @deepseek-ai/dsh` 装好的 `dsh`；它的工作区和会话直接合并到 Windows 的窗口里。
+让 DeepSeek Harness 像 Codex 桌面版一样支持 WSL 和 SSH 远程主机。**只需在 Windows 上安装一次**（主机上已经常驻了自己的 dsh 时，也在那里装一份，见 [连接到已在运行的 dsh](#连接到已在运行的-dsh)）。 每个 WSL 发行版、每台 SSH 服务器都是一台远程主机，运行你自己用 `npm i -g @deepseek-ai/dsh` 装好的 `dsh`；它的工作区和会话直接合并到 Windows 的窗口里。
 
 - **WSL 工作区**：添加工作区时选「WSL」，从 Linux 文件系统里挑一个文件夹。这个工作区的会话在 WSL 里你自己的 `dsh` 中运行：用 WSL 的 `~/.dsh` 配置、模型和插件，命令、文件读写和搜索都在 Linux 里执行，并使用你在 WSL 里配置的沙箱。会话列表、聊天视图、历史、实时输出、提问和授权确认都在 Windows 的同一个窗口里，和 Windows 会话并列。
 - **SSH 远程主机**：用法与 WSL 完全一致。在 设置 → 通用 → **SSH 远程主机** 中添加 `user@host`、`host:端口` 或 `~/.ssh/config` 里的 Host，连接后服务器上你自己的 `dsh` 的工作区和会话同样合并到这个窗口；添加工作区时选「SSH」。见下文 [SSH 远程主机](#ssh-远程主机)。
@@ -195,6 +195,24 @@ SSH 主机的用法与 WSL 发行版一致，只是主机需要你手动添加�
 
 移除 SSH 主机后，服务器上只留下 `~/.dsh-wsl-remote`，可用 `rm -rf ~/.dsh-wsl-remote` 清理。
 
+### 连接到已在运行的 dsh
+
+默认情况下，连接时插件会在 WSL 或服务器上**另起一个** `dsh`，断开时再结束它。如果那台主机上已经常驻了一个 dsh（例如对外提供网页版的 `dsh web` 服务），两个 dsh 共用同一个 `~/.dsh`，却各自记一份工作区列表，后果是：从 Windows 新建的工作区在网页版里显示为「未分组」，甚至可能互相覆盖对方的工作区记录。
+
+解决办法是**把本插件也装进那个正在运行的 dsh**：
+
+1. 在那台主机的 dsh 里安装本插件。可以在 Windows 的 插件 → **WSL / SSH** 页里用「同步插件」装过去；也可以在主机上执行 `dsh plugin --profile web add <本插件的安装来源>`；或者在那个 dsh 的插件页里安装。安装和启用都会立即生效，**不需要重启**那个 dsh。
+2. 插件在 Linux 上只做一件事：在只有当前用户能访问的 Unix socket（`~/.dsh/wsl-remote/agent.sock`，权限 0600，目录 0700）上等待 Windows 连接。它不开网络端口，不经过 dsh 的网页入口，也不经过网页服务前面的鉴权或代理。
+3. 之后在 Windows 上连接这台主机时，插件先检查这个 socket：有 dsh 在监听就**直接连上它**，设置页显示「已连接到正在运行的 dsh」；没有就按原来的方式另起一个 dsh。
+
+连接已在运行的 dsh 时：
+
+- Windows 窗口和那个 dsh 的网页版用的是**同一个进程**：工作区、会话只有一份，从任一端新建的工作区在两边都正常分组。
+- 断开连接只断开 Windows 这一路，**不会结束那个 dsh**。多个 Windows 窗口可以先后连接同一个 dsh。
+- **默认不共享 Windows 的登录状态**：那个 dsh 继续用它自己的模型和凭据，避免公网服务的凭据被改写。确实需要共享时，在启动那个 dsh 的环境里设置 `DSH_WSL_REMOTE_RESIDENT_SHARE_LOGIN=1`。
+- 两边插件版本不同时，Windows 会检查协议版本；那个 dsh 里的插件太旧时会提示先更新它（例如在 Windows 的插件页同步一次）。
+- 停用或卸载那个 dsh 里的本插件，socket 随之移除，下次连接会退回「另起一个 dsh」。
+
 ## 工作原理
 
 ```text
@@ -246,7 +264,7 @@ Codex 的窗口在每个请求里都带 `hostId`。DeepSeek Harness 的客户端
 - `lib/bridge/host-client.js`：用 DeepSeek Harness 官方客户端包组装的 WSL dsh 客户端。
 - `lib/remote.js`：一个远程连接（WSL 或 SSH），负责部署、版本检查、启动、本机回环中继、应答凭据请求，以及带退避的自动重连。
 - `lib/transport.js`：在远程主机上运行 Linux 命令：WSL 用 `wsl.exe -d`，SSH 用 `ssh -T -o BatchMode=yes`（参数逐个加单引号）；以及 `~/.ssh/config` 解析。
-- `server/launch.sh`、`server/agent.mjs`：通过登录 Shell 启动 `dsh`；agent 是通过 `dsh --patch` 加载的 Cordis 插件，只在被 Windows Host 启动时运行。管道上在 mux 帧之前先输出一行标记，SSH 登录 Shell 的欢迎信息会被丢弃。
+- `server/launch.sh`、`server/agent.mjs`：通过登录 Shell 启动 `dsh`；agent 是通过 `dsh --patch` 加载的 Cordis 插件，只在被 Windows Host 启动时运行。管道上在 mux 帧之前先输出一行标记，SSH 登录 Shell 的欢迎信息会被丢弃。本插件装在 Linux 上的 dsh 里时，`index.js` 改为只运行常驻 agent（`serveResident`，监听 Unix socket）；`launch.sh attach` 和 `server/connect.mjs` 把 `wsl.exe` / `ssh` 的 stdio 接到这个 socket，协议与上面相同。
 - `server/dsh-harness.sh`、`lib/requests.js`：`dsh-harness` 命令。
 - `server/session-copy.mjs`、`server/workspace-files.mjs`、`server/path-rewrite.mjs`、`lib/session-copy.js`：会话复制。读取和创建两半都只用 dsh 自己的服务（`sessionQuery`、附件存储、`agents.create` 带种子历史，与「分叉会话」相同的方式），工作区文件用 `node:fs` 读写，`path-rewrite.mjs` 把历史里的路径改到目标位置；同一份文件既在 Windows Host 里运行，也随 agent 部署到远程主机、经管道调用。
 - `lib/linux-fs.js`：WSL / SSH 文件夹选择器，以及选择器地址（`\\wsl.localhost\…`、`ssh://<主机>/…`）与主机和 Linux 路径之间的转换。

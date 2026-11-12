@@ -637,7 +637,10 @@ await test('plugins: where each one is installed, and how a Windows one installs
     ['dsh-vscode-mode', 'wsl', null, false],
     ['same', 'both', '1.0.0', true],
   ], 'shipped bundles are left out');
-  assert.deepEqual(windowsOnly.map((plugin) => [plugin.name, plugin.installSpec]), [['dsh-llm-tencent-intranet', 'link:/mnt/f/proj/dsh-llm-tencent-intranet']], 'this plugin itself is never offered to WSL');
+  assert.deepEqual(windowsOnly.map((plugin) => [plugin.name, plugin.installSpec]), [
+    ['dsh-llm-tencent-intranet', 'link:/mnt/f/proj/dsh-llm-tencent-intranet'],
+    ['@local/dsh-wsl-remote', 'link:/mnt/f/proj/dsh-wsl-remote'],
+  ], 'this plugin itself is offered too: installed in WSL, a window joins that running dsh');
   assert.equal(wslInstallSpec({ name: 'x', source: 'x@^1.2.0' }), 'x@^1.2.0');
   assert.equal(wslInstallSpec({ name: 'x', source: 'file:C:\\work\\x' }), 'file:/mnt/c/work/x');
   assert.equal(wslInstallSpec({ name: 'x', source: 'link:\\\\server\\share\\x' }), 'x', 'a UNC folder falls back to the registry name');
@@ -860,6 +863,47 @@ await test('session copy: paths in the history point at the new workspace', () =
   assert.equal(events[0].data.arguments.includes('/home/me/x'), false, 'the input is not mutated');
 });
 
+await test('resident agent: probe, one agent per process, socket path, joined over a socket', async () => {
+  assert.equal(parseProbe('__WSLR__ path=/x/dsh\n__WSLR__ residentSocket=/home/me/.dsh/wsl-remote/agent.sock\n').residentSocket, '/home/me/.dsh/wsl-remote/agent.sock');
+  assert.equal(parseProbe('__WSLR__ path=/x/dsh\n').residentSocket, undefined, 'no socket: start a dsh as before');
+
+  const agentModule = await import('../server/agent.mjs');
+  assert.equal(agentModule.residentSocketPath({ HOME: '/home/me' }), '/home/me/.dsh/wsl-remote/agent.sock');
+  assert.equal(agentModule.residentSocketPath({ HOME: '/home/me', DSH_HOME: '/data/dsh' }), '/data/dsh/wsl-remote/agent.sock');
+  // The --patch copy and the installed plugin are separate module instances; one owner per role.
+  assert.equal(agentModule.claimRole('pipe'), true);
+  assert.equal(agentModule.claimRole('pipe'), false, 'a second copy in the same process stays off the pipe');
+  agentModule.releaseRole('pipe');
+  assert.equal(agentModule.claimRole('pipe'), true);
+  agentModule.releaseRole('pipe');
+
+  if (process.platform === 'win32') {
+    // Unix sockets need Linux for the mode bits; the WSL rehearsal covers the listener itself.
+    // Here: one window connection served the resident way, over an in-memory pipe.
+    const toAgent = new PassThrough();
+    const fromAgent = new PassThrough();
+    const disposers = [];
+    const ctx = { get: () => undefined, inject() {}, effect: (factory) => { const dispose = factory(); disposers.push(dispose); return () => dispose?.(); } };
+    let closed = 0;
+    agentModule.serve(ctx, toAgent, fromAgent, { shareLogin: false, resident: true, url: 'http://127.0.0.1:1/?token=t', onClosed: () => { closed++; } });
+    const hello = await new Promise((resolve) => {
+      new Mux(fromAgent, new PassThrough(), {
+        control: (payload) => { const message = JSON.parse(payload.toString('utf8')); if (message.method === 'hello') resolve(message.params); },
+        frame() {},
+        closed() {},
+      });
+    });
+    assert.equal(hello.agent, agentModule.AGENT_PROTOCOL);
+    assert.equal(hello.resident, true);
+    assert.equal(hello.shareLogin, false, 'a joined dsh keeps its own sign-in by default');
+    assert.equal(hello.url, 'http://127.0.0.1:1/?token=t');
+    toAgent.end();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(closed, 1, 'the connection ends; nothing stops the process');
+    for (const dispose of disposers) dispose?.();
+  }
+});
+
 await test('settings: invalid fields are dropped', () => {
   const file = join(mkdtempSync(join(tmpdir(), 'wslr-')), 'wsl-remote.json');
   const value = writeSettings({ shareLogin: false, profile: 'bad name', autoConnect: ['Ubuntu', 'x y', 'Ubuntu'], ports: { Ubuntu: 40123, Bad: 80 } }, file);
@@ -910,6 +954,7 @@ async function startAgent(input, output, wslStore) {
   copyFileSync(new URL('../server/session-copy.mjs', import.meta.url), join(dir, 'session-copy.mjs'));
   copyFileSync(new URL('../server/workspace-files.mjs', import.meta.url), join(dir, 'workspace-files.mjs'));
   copyFileSync(new URL('../server/path-rewrite.mjs', import.meta.url), join(dir, 'path-rewrite.mjs'));
+  copyFileSync(new URL('../server/connect.mjs', import.meta.url), join(dir, 'connect.mjs'));
   copyFileSync(new URL('../lib/mux.js', import.meta.url), join(dir, 'mux.js'));
   writeFileSync(join(dir, 'package.json'), '{"type":"module"}');
   const { serve } = await import(pathToFileURL(join(dir, 'agent.mjs')).href);
@@ -961,7 +1006,7 @@ await test('shared login: WSL reads and refreshes the Windows store under its lo
 
   const dispose = await startAgent(toWsl, toWindows, wslStore);
   const hello = await session.hello.promise;
-  assert.equal(hello.agent, 4);
+  assert.equal(hello.agent, 5);
 
   // Reads come from Windows; the WSL-only cookie secret stays local.
   assert.deepEqual(await wslStore.resolve('DEEPSEEK_API_KEY'), { value: 'sk-windows', source: 'windows' });

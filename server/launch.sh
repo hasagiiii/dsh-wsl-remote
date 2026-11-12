@@ -2,6 +2,7 @@
 # Started by the Windows DeepSeek Harness through wsl.exe or ssh (same argv):
 #   wsl.exe -d <distro> --cd ~ -e /bin/sh launch.sh probe
 #   wsl.exe -d <distro> --cd ~ -e /bin/sh launch.sh run <profile> <share-login 0|1> <marker>
+#   wsl.exe -d <distro> --cd ~ -e /bin/sh launch.sh attach <socket>   (a dsh already running with this plugin)
 #   wsl.exe -d <distro> -e /bin/sh launch.sh kill <pid> <start time>
 #   ssh -T … <host> "'/bin/sh' 'launch.sh' 'run' …"
 # Like Codex's remote connections, the user's own CLI is found on the PATH of
@@ -36,6 +37,17 @@ probe)
     [ -n "${NVM_DIR:-}" ] && [ -s "$NVM_DIR/nvm.sh" ] && printf "__WSLR__ nvm=1\n"
     case ":$PATH:" in *":$HOME/.local/bin:"*) printf "__WSLR__ localBinOnPath=1\n" ;; esac
   ' </dev/null 2>/dev/null
+  # A dsh with this plugin installed listens here (resident agent); `attach` joins it.
+  sock="${2:-${DSH_HOME:-$HOME/.dsh}/wsl-remote/agent.sock}"
+  [ -S "$sock" ] && printf '__WSLR__ residentSocket=%s\n' "$sock"
+  ;;
+attach)
+  # Join a dsh that runs on its own (resident agent) instead of starting one.
+  # Node comes from the login shell, like dsh itself. Exit 3: nobody answers.
+  sock=$2
+  case "$sock" in '' | *[!A-Za-z0-9._/-]*) echo "invalid socket path" >&2; exit 2 ;; esac
+  export DSH_WSL_REMOTE_CONNECT="$here/connect.mjs" DSH_WSL_REMOTE_SOCKET="$sock"
+  exec "$s" -ilc 'exec node "$DSH_WSL_REMOTE_CONNECT" "$DSH_WSL_REMOTE_SOCKET"'
   ;;
 run)
   profile=$2
@@ -91,7 +103,7 @@ kill)
   echo killed
   ;;
 *)
-  echo "usage: launch.sh probe | run <profile> <0|1> <marker> | kill <pid> <start>" >&2
+  echo "usage: launch.sh probe | run <profile> <0|1> <marker> | attach <socket> | kill <pid> <start>" >&2
   exit 2
   ;;
 esac

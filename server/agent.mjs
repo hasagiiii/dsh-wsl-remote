@@ -18,7 +18,9 @@
  * Host's credential store first, so one DeepSeek sign-in, API key or
  * refreshed token serves both sides and is never refreshed twice.
  */
-import { Socket, createConnection } from 'node:net';
+import { Socket, createConnection, createServer } from 'node:net';
+import { chmod, mkdir, rm } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { FRAME, Mux } from './mux.js';
 import { existingInWorkspace, exportSession, importSession, planSessionFiles } from './session-copy.mjs';
 
@@ -26,13 +28,21 @@ export const name = 'wsl-remote-agent';
 
 /** Records that stay in this distribution: its own browser-cookie secret. */
 const LOCAL_ONLY = /^client-connection\//;
-/** 2: answers `resolve-credential` for model sync. 3: `session-export` / `session-import` for session copy. 4: session copy carries workspace files (`session-files`, `workspace-existing`). */
-const AGENT_PROTOCOL = 4;
+/**
+ * 2: answers `resolve-credential` for model sync. 3: `session-export` / `session-import` for session copy.
+ * 4: session copy carries workspace files (`session-files`, `workspace-existing`).
+ * 5: a resident agent (this plugin installed in a dsh that runs on its own) answers on a Unix
+ *    socket; its hello carries `resident` and the dsh web `url` the Windows side relays to.
+ */
+export const AGENT_PROTOCOL = 5;
 
 const log = (message) => process.stderr.write(`[wsl-remote agent] ${message}\n`);
 
 export function apply(ctx) {
   if (process.env.DSH_WSL_REMOTE_OVERLAY === undefined) return; // not started by the Windows Host
+  // A dsh that also has this plugin installed loads the agent twice; the pipe belongs to one of them.
+  if (!claimRole('pipe')) return;
+  ctx.effect(() => () => releaseRole('pipe'), 'wsl-remote agent: pipe role');
   let input;
   let output;
   try {
@@ -50,6 +60,100 @@ export function apply(ctx) {
       process.kill(process.pid, 'SIGTERM');
     },
   });
+}
+
+/**
+ * Which agent role this process already runs: the `--patch` pipe of a dsh the
+ * Windows Host started, and/or the Unix socket of a dsh with this plugin
+ * installed. Kept on globalThis so two loaded copies (the patch and the
+ * installed plugin, different module instances) agree on one owner.
+ */
+const ROLES = Symbol.for('dsh-wsl-remote/agent-roles');
+const roles = () => (globalThis[ROLES] ??= new Set());
+export function claimRole(role) {
+  if (roles().has(role)) return false;
+  roles().add(role);
+  return true;
+}
+export function releaseRole(role) {
+  roles().delete(role);
+}
+
+/** Where a resident agent listens: one socket per user and DSH home, mode 0600 in a 0700 folder. */
+export function residentSocketPath(env = process.env, home = env.HOME) {
+  const dshHome = (env.DSH_HOME ?? '').trim() || `${home}/.dsh`;
+  return `${dshHome}/wsl-remote/agent.sock`;
+}
+
+/**
+ * The resident agent: this plugin installed in a dsh that runs on its own (a
+ * long-running `dsh web`, a server). The Windows Host reaches it through the
+ * same transport it uses to start a dsh (`wsl.exe` / `ssh`), running a small
+ * Node bridge that connects to this socket, so nothing listens on the network
+ * and the dsh's own web entry is not involved. Each connection is one Windows
+ * window session; closing it ends only that connection, never this dsh.
+ * Credentials are shared only when the dsh's owner turned that on here
+ * (`DSH_WSL_REMOTE_RESIDENT_SHARE_LOGIN=1`); by default this dsh keeps its own.
+ */
+export function serveResident(ctx, { path = residentSocketPath(), url, shareLogin = process.env.DSH_WSL_REMOTE_RESIDENT_SHARE_LOGIN === '1' } = {}) {
+  if (!claimRole('socket')) return undefined;
+  let server;
+  let closed = false;
+  const live = new Set();
+  const start = async () => {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await chmod(dirname(path), 0o700);
+    // A socket left by a dsh that ended without cleanup: connect to tell a live one from a stale file.
+    const alive = await new Promise((resolve) => {
+      const probe = createConnection(path);
+      probe.once('connect', () => { probe.destroy(); resolve(true); });
+      probe.once('error', () => resolve(false));
+    });
+    if (alive) {
+      log(`another dsh already answers on ${path}; this one stays off the socket`);
+      releaseRole('socket');
+      return;
+    }
+    await rm(path, { force: true });
+    if (closed) return;
+    server = createServer((socket) => {
+      live.add(socket);
+      socket.on('close', () => live.delete(socket));
+      socket.on('error', () => {});
+      serve(ctx, socket, socket, {
+        shareLogin,
+        resident: true,
+        url: typeof url === 'function' ? url() : url,
+        onClosed: () => socket.destroy(),
+      });
+    });
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(path, () => {
+        server.off('error', reject);
+        resolve();
+      });
+    });
+    await chmod(path, 0o600);
+    log(`resident agent listening on ${path}`);
+  };
+  const ready = start().catch((error) => {
+    releaseRole('socket');
+    log(`resident agent could not listen on ${path}: ${error.message}`);
+  });
+  return {
+    ready,
+    async close() {
+      closed = true;
+      await ready;
+      for (const socket of live) socket.destroy();
+      if (server !== undefined) {
+        await new Promise((resolve) => server.close(() => resolve()));
+        await rm(path, { force: true }).catch(() => {});
+      }
+      releaseRole('socket');
+    },
+  };
 }
 
 /**
@@ -224,17 +328,48 @@ export function serve(ctx, input, output, options) {
     };
   }
 
-  // Decided by the Windows Host when it launched this dsh; fixed for the process.
+  // Decided by the Windows Host when it launched this dsh (or by this dsh's owner for a
+  // resident agent); fixed for the connection. A resident agent undoes it when the connection ends.
+  const cleanups = [];
   if (options.shareLogin) {
-    ctx.inject(['credentials'], (scope) => {
-      scope.effect(() => shareCredentials(scope.credentials), 'wsl-remote agent: shared credentials');
-    });
+    if (options.resident) {
+      const provider = ctx.get('credentials');
+      if (provider !== undefined) cleanups.push(shareCredentials(provider));
+    } else {
+      ctx.inject(['credentials'], (scope) => {
+        scope.effect(() => shareCredentials(scope.credentials), 'wsl-remote agent: shared credentials');
+      });
+    }
   }
 
-  ctx.effect(() => () => {
+  const end = () => {
     closing = true;
+    for (const cleanup of cleanups.splice(0)) cleanup();
+    for (const waiter of pending.values()) waiter.reject(new Error('Windows connection closed'));
+    pending.clear();
     mux.fail(new Error('agent unloaded'));
-  }, 'wsl-remote agent: Windows pipe');
+  };
+  if (options.resident) {
+    // One of possibly many window connections: it ends with its socket, or when the plugin unloads.
+    const unload = ctx.effect(() => end, 'wsl-remote agent: resident connection');
+    const previous = options.onClosed;
+    options.onClosed = (reason) => {
+      for (const cleanup of cleanups.splice(0)) cleanup();
+      unload?.();
+      previous?.(reason);
+    };
+  } else {
+    ctx.effect(() => end, 'wsl-remote agent: Windows pipe');
+  }
 
-  send({ method: 'hello', params: { agent: AGENT_PROTOCOL, pid: process.pid, node: process.version, shareLogin: options.shareLogin } });
+  send({
+    method: 'hello',
+    params: {
+      agent: AGENT_PROTOCOL,
+      pid: process.pid,
+      node: process.version,
+      shareLogin: options.shareLogin,
+      ...(options.resident ? { resident: true, url: options.url } : {}),
+    },
+  });
 }

@@ -151,7 +151,9 @@ test('plan: what each plugin needs on the target', () => {
     ['c', 'disabled', 'enable', null],
     ['d', 'unsupported', null, 'local-path'],
     ['e', 'same', null, null],
-  ], 'shipped bundles and this plugin itself are left out');
+    // This plugin installs on a Linux host too (resident agent); from a Windows folder it needs a published source.
+    ['@local/dsh-wsl-remote', 'unsupported', null, 'local-path'],
+  ], 'shipped bundles are left out');
   assert.deepEqual(targetOnly.map((item) => item.name), ['only-there'], 'target-only plugins are reported, never removed');
 });
 
