@@ -867,6 +867,14 @@ await test('resident agent: probe, one agent per process, socket path, joined ov
   assert.equal(parseProbe('__WSLR__ path=/x/dsh\n__WSLR__ residentSocket=/home/me/.dsh/wsl-remote/agent.sock\n').residentSocket, '/home/me/.dsh/wsl-remote/agent.sock');
   assert.equal(parseProbe('__WSLR__ path=/x/dsh\n').residentSocket, undefined, 'no socket: start a dsh as before');
 
+  // A dsh a Windows window started for itself shares the profile, so it loads the installed plugin too;
+  // that copy must not take the socket the dsh running on its own answers on.
+  {
+    const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+    const start = source.slice(source.indexOf('function startResidentAgent(ctx) {'));
+    assert.match(start.slice(0, 600), /if \(process\.env\.DSH_WSL_REMOTE_OVERLAY !== undefined\) return;/, 'a window-started dsh leaves the socket alone');
+  }
+
   const agentModule = await import('../server/agent.mjs');
   assert.equal(agentModule.residentSocketPath({ HOME: '/home/me' }), '/home/me/.dsh/wsl-remote/agent.sock');
   assert.equal(agentModule.residentSocketPath({ HOME: '/home/me', DSH_HOME: '/data/dsh' }), '/data/dsh/wsl-remote/agent.sock');

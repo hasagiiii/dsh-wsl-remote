@@ -46,6 +46,10 @@ import { serveResident } from './server/agent.mjs';
  * listens, so the agent reads it per connection through `url()`.
  */
 function startResidentAgent(ctx) {
+  // A dsh the Windows window started for itself (`--patch`, DSH_WSL_REMOTE_OVERLAY set) shares the
+  // profile and so loads this installed plugin too; it is that window's own dsh, not one to join,
+  // and must leave the socket to the dsh that runs on its own.
+  if (process.env.DSH_WSL_REMOTE_OVERLAY !== undefined) return;
   let origin;
   let launch;
   ctx.inject(['webServer', 'connection'], (scope) => {
