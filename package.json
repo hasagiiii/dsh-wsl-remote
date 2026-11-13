@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-wsl-remote",
-  "version": "4.4.0",
+  "version": "4.4.1",
   "private": true,
   "type": "module",
   "description": "WSL and SSH remote hosts for DeepSeek Harness, like the Codex desktop app: each WSL distribution or SSH server runs your own dsh (its ~/.dsh, models, plugins and Linux files), and its workspaces and sessions appear in the Windows window beside the Windows ones.",
@@ -11,7 +11,7 @@
   },
   "scripts": {
     "test": "node test/unit.mjs",
-    "test:models": "node --test test/models.mjs test/model-plugins.mjs test/client-models.mjs",
+    "test:models": "node --test test/models.mjs test/model-plugins.mjs test/client-models.mjs test/client-resident.mjs",
     "test:ssh": "node --test --test-isolation=none test/ssh.mjs test/client-ssh.mjs test/plugin-sync.mjs",
     "test:remote": "node test/remote.mjs",
     "test:ssh-remote": "node test/ssh-remote.mjs",

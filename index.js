@@ -137,8 +137,8 @@ export default class WslRemoteService extends Service {
       this.settings = { sshHosts: [], autoConnect: [], workspaceOrder: [] };
       this.connections = new Map();
       this.distros = [];
-      // The window's client half polls this route; on Linux there is nothing to merge, so it
-      // answers "ready" at once (the client would otherwise keep polling a missing route).
+      // The window's client half polls these routes; on Linux there is nothing to merge or route,
+      // so they answer at once: a resident host, with no WSL/SSH hosts of its own.
       ctx.inject(['connection'], (scope) => {
         scope.effect(() => scope.connection.fetch.register({
           path: `${ROUTE}/connections`,
@@ -146,6 +146,12 @@ export default class WslRemoteService extends Service {
           requestBody: 'buffered',
           fetch: async () => json({ platform: process.platform, resident: true, bridgeReady: false, distros: [] }),
         }), 'wsl-remote: resident status route');
+        scope.effect(() => scope.connection.fetch.register({
+          path: `${ROUTE}/distros`,
+          methods: ['GET'],
+          requestBody: 'buffered',
+          fetch: async () => json({ resident: true, distros: [], workspaces: {} }),
+        }), 'wsl-remote: resident hosts route');
       });
       startResidentAgent(ctx);
       return;

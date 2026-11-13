@@ -1019,6 +1019,12 @@ window.__ModuleLoader__.load({
       }, 'wsl-remote: workspace styles');
 
       /** Distribution facts (name, OS, state, home) shared by the badge, the chooser and the picker. */
+      // Set when the Host answers that this page belongs to a dsh on Linux (resident agent host):
+      // there are no WSL/SSH hosts to route to, and Linux paths are this dsh's own.
+      let residentHost = false;
+      call('api/local-wsl-remote/connections').then((status) => {
+        residentHost = status?.resident === true;
+      }, () => {});
       const distros = (() => {
         let state = { distros: [], workspaces: {}, loaded: false };
         const listeners = new Set();
@@ -1026,6 +1032,7 @@ window.__ModuleLoader__.load({
         let timer;
         const refresh = () => (inflight ??= call('api/local-wsl-remote/distros')
           .then((value) => {
+            if (value?.resident === true) residentHost = true;
             state = { distros: value.distros ?? [], workspaces: value.workspaces ?? {}, loaded: true };
             for (const listener of listeners) listener();
           })
@@ -1069,7 +1076,14 @@ window.__ModuleLoader__.load({
       };
       /** Whether a session runs in WSL: its workspace belongs to a distribution, or its directory is a Linux path. */
       const isWslSession = (sessionId) => {
+        // In a dsh on Linux (this plugin installed there as the resident agent) every session is the
+        // dsh's own, with a Linux path; nothing is remote from this page, so leave the picker as shipped.
+        if (residentHost) return false;
         if (hostOfSession(sessionId) !== undefined) return true;
+        // With no WSL/SSH host configured at all, a Linux path cannot be remote (a dsh on Linux,
+        // or a Windows window with no remote hosts): this also covers the moment before `residentHost` is known.
+        const known = distros.getSnapshot();
+        if (known.loaded && known.distros.length === 0) return false;
         const items = ctx.get('workspaces')?.list?.getSnapshot?.().items ?? [];
         const workspace = items.find((item) => item.sessionIds.includes(sessionId));
         const cwd = ctx.get('sessions')?.list?.getSnapshot?.().byId?.[sessionId]?.cwd ?? workspace?.path;
