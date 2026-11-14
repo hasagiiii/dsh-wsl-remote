@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "WSL",
-    "description": "Use WSL like Codex: sessions in a WSL workspace run commands, file edits and searches inside that distribution while other workspaces stay on Windows; you can also run your own dsh inside WSL (WSL remote connections) or open a folder from a WSL terminal with dsh-harness. Install on Windows only."
+    "title": "WSL / SSH",
+    "description": "Connect to SSH hosts on macOS, or SSH and WSL on Windows. Manage remote workspaces, sessions, models and plugins in one window. Linux installations act as resident connection targets."
   }
 }

@@ -7,7 +7,7 @@ import test from 'node:test';
 // a session of a dsh on Linux (this plugin installed there as the resident agent) is that dsh's own,
 // so its picker must stay exactly as shipped (it used to fail with "this WSL session's distribution
 // is not known yet" when switching models in that dsh's own web UI).
-async function pickerFixture({ resident, distros }) {
+async function pickerFixture({ resident, distros, platform = 'win32', owners = {}, cwd = '/home/me/project' }) {
   const requests = [];
   const services = {};
   let plugin;
@@ -18,8 +18,8 @@ async function pickerFixture({ resident, distros }) {
     console, AbortController, setInterval: () => 1, clearInterval() {}, setTimeout: () => 1, clearTimeout() {},
     fetch: async (path) => {
       requests.push(path);
-      const value = path.endsWith('/connections') ? (resident ? { resident: true, platform: 'linux', distros: [] } : { platform: 'win32', bridgeReady: true, distros })
-        : path.endsWith('/distros') ? (resident ? { resident: true, distros: [], workspaces: {} } : { distros, workspaces: {} })
+      const value = path.endsWith('/connections') ? (resident ? { resident: true, platform: 'linux', distros: [] } : { platform, bridgeReady: true, distros })
+        : path.endsWith('/distros') ? (resident ? { resident: true, distros: [], workspaces: {} } : { distros, workspaces: owners })
           : path.endsWith('/model-catalog') ? { catalog: { groups: [] } } : {};
       return { ok: true, json: async () => value };
     },
@@ -41,8 +41,8 @@ async function pickerFixture({ resident, distros }) {
     directoryFor(sessionId) { calls.push({ sessionId, catalog: this.catalog }); return { sessionId }; },
   };
   services.modelDirectories = service;
-  services.sessions = { list: { getSnapshot: () => ({ byId: { s1: { cwd: '/home/me/project' } } }) } };
-  services.workspaces = { list: { getSnapshot: () => ({ items: [{ workspaceId: 'w1', path: '/home/me/project', sessionIds: ['s1'] }] }) } };
+  services.sessions = { list: { getSnapshot: () => ({ byId: { s1: { cwd } } }) } };
+  services.workspaces = { list: { getSnapshot: () => ({ items: [{ workspaceId: 'w1', path: cwd, sessionIds: ['s1'] }] }) } };
   await new Promise((resolve) => setImmediate(resolve));
   const original = service.directoryFor;
   for (const start of effects.splice(0)) {
@@ -70,4 +70,26 @@ test('a Windows window with a connected WSL host still gives a Linux session tha
   assert.equal(calls.length, 1);
   assert.notEqual(calls[0].catalog, shippedCatalog, 'the WSL host\'s catalog is used for that one call');
   assert.equal(service.catalog, shippedCatalog, 'and the shared catalog is restored after it');
+});
+
+for (const cwd of ['/Users/me/project', '/tmp/shared']) {
+  test(`macOS keeps local model catalog for ${cwd} with one SSH connection`, async () => {
+    const { service, calls, shippedCatalog, requests } = await pickerFixture({
+      platform: 'darwin', cwd, distros: [{ name: 'ssh:dev', state: 'connected', kind: 'ssh' }],
+    });
+    service.directoryFor('s1');
+    assert.equal(calls[0].catalog, shippedCatalog);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(!requests.some((path) => path.endsWith('/model-catalog')));
+  });
+}
+
+test('macOS uses SSH model catalog for an explicitly remote workspace', async () => {
+  const { service, calls, shippedCatalog } = await pickerFixture({
+    platform: 'darwin', owners: { w1: 'ssh:dev' },
+    distros: [{ name: 'ssh:dev', state: 'connected', kind: 'ssh' }],
+  });
+  service.directoryFor('s1');
+  assert.notEqual(calls[0].catalog, shippedCatalog);
+  assert.equal(service.catalog, shippedCatalog);
 });

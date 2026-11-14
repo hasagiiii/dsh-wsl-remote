@@ -141,6 +141,21 @@ test('Settings list WSL distributions and SSH hosts with the same actions, plus 
   assert.deepEqual(posts, [['connect', { distro: 'ssh:me@dev' }], ['ssh/remove', { distro: 'ssh:me@dev' }], ['ssh/add', { dest: 'prod' }]]);
 });
 
+test('macOS settings expose SSH add and connect instead of resident mode', async () => {
+  const f = load(() => ({ ...status, platform: 'darwin', distros: status.distros.filter((host) => host.kind === 'ssh') }));
+  const Row = f.registered.get('local-wsl-remote-connections');
+  await f.render(f.React.createElement(Row, {}));
+  await f.flush();
+  const tree = await f.render(f.React.createElement(Row, {}));
+  assert.doesNotMatch(f.text(tree), /residentHere/);
+  assert.match(f.text(tree), /SSH: me@dev/);
+  f.button(tree, 'retry').props.onClick();
+  f.button(tree, '+ prod').props.onClick();
+  await f.flush();
+  assert.ok(f.requests.some((r) => r.path.endsWith('/connect') && r.payload.distro === 'ssh:me@dev'));
+  assert.ok(f.requests.some((r) => r.path.endsWith('/ssh/add') && r.payload.dest === 'prod'));
+});
+
 test('Add workspace: the SSH card picks an SSH host and the picker hands back an ssh:// address', async () => {
   const f = load((path) => {
     if (path.endsWith('/distros')) return { distros: [{ name: 'Ubuntu', state: 'connected', isDefault: true }, { name: 'ssh:me@dev', state: 'disconnected' }], workspaces: {} };

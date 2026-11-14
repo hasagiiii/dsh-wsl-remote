@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-让 DeepSeek Harness 像 Codex 桌面版一样支持 WSL 和 SSH 远程主机。**只需在 Windows 上安装一次**（主机上已经常驻了自己的 dsh 时，也在那里装一份，见 [连接到已在运行的 dsh](#连接到已在运行的-dsh)）。 每个 WSL 发行版、每台 SSH 服务器都是一台远程主机，运行你自己用 `npm i -g @deepseek-ai/dsh` 装好的 `dsh`；它的工作区和会话直接合并到 Windows 的窗口里。
+让 DeepSeek Harness 像 Codex 桌面版一样支持 WSL 和 SSH 远程主机。**在 Windows 或 macOS 上安装**（主机上已经常驻了自己的 dsh 时，也在那里装一份，见 [连接到已在运行的 dsh](#连接到已在运行的-dsh)）。 每个 WSL 发行版、每台 SSH 服务器都是一台远程主机，运行你自己用 `npm i -g @deepseek-ai/dsh` 装好的 `dsh`；它的工作区和会话直接合并到本机窗口里。
 
 - **WSL 工作区**：添加工作区时选「WSL」，从 Linux 文件系统里挑一个文件夹。这个工作区的会话在 WSL 里你自己的 `dsh` 中运行：用 WSL 的 `~/.dsh` 配置、模型和插件，命令、文件读写和搜索都在 Linux 里执行，并使用你在 WSL 里配置的沙箱。会话列表、聊天视图、历史、实时输出、提问和授权确认都在 Windows 的同一个窗口里，和 Windows 会话并列。
 - **SSH 远程主机**：用法与 WSL 完全一致。在 设置 → 通用 → **SSH 远程主机** 中添加 `user@host`、`host:端口` 或 `~/.ssh/config` 里的 Host，连接后服务器上你自己的 `dsh` 的工作区和会话同样合并到这个窗口；添加工作区时选「SSH」。见下文 [SSH 远程主机](#ssh-远程主机)。
@@ -78,9 +78,9 @@ bash -lc 'dsh --version'   # 需要 0.2.1-rc.5 或更高；本插件支持 DeepS
 
 缺少 dsh 或版本过低时，设置页会列出可以复制的安装命令，见下文。
 
-### 2. 在 Windows 上安装插件
+### 2. 在 Windows 或 macOS 上安装插件
 
-在 PowerShell 中运行以下命令。`dsh` 命令随 DeepSeek Harness 桌面版一起安装。
+在 Windows 的 PowerShell 或 macOS 的终端中运行以下命令。`dsh` 命令随 DeepSeek Harness 桌面版一起安装。
 
 ```powershell
 git clone https://github.com/hasagiiii/dsh-wsl-remote.git
@@ -92,7 +92,7 @@ dsh plugin --profile desktop add .
 
 pnpm 可能会警告：链接进来的包不会从配置目录解析 peer 依赖（`@deepseek-ai/cordis` 等）。这个警告可以忽略，DeepSeek Harness 加载插件时会提供这些包。不要按提示改用 `file:`：那样安装的是一份副本，之后 `git pull` 的更新不会生效。
 
-**不要在 WSL 或 SSH 服务器上的 dsh 中安装本插件。** 它只为 Windows 主机设计。
+**macOS 支持主动连接 SSH，Windows 支持 SSH 和 WSL。** macOS 可在插件页安装本仓库，随后在「设置 → 通用 → SSH 远程主机」添加主机；连接使用本机 OpenSSH 和 `~/.ssh/config`。Linux 上安装本插件时作为常驻被连接端，见下文「连接到已在运行的 dsh」。
 
 ### 3. 启用
 

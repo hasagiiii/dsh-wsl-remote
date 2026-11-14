@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "WSL",
-    "description": "像 Codex 一样使用 WSL：添加 WSL 工作区后，该工作区会话的命令、文件读写和搜索在对应发行版的 Linux 中执行，其他工作区照常在 Windows 执行；也可以在 WSL 中启动你自己的 dsh（WSL 远程连接），或在 WSL 终端用 dsh-harness 打开目录。只需在 Windows 上安装。"
+    "title": "WSL / SSH",
+    "description": "在 macOS 上连接 SSH 远程主机，在 Windows 上连接 SSH 和 WSL。远程工作区、会话、模型和插件可在同一个窗口中管理；Linux 安装作为常驻被连接端。"
   }
 }

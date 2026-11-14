@@ -49,12 +49,12 @@ window.__ModuleLoader__.load({
         'models.done': '模型配置同步完成。',
         'models.partial': '同步未全部完成，已写入的配置已保留。请刷新预览后重试。',
         'models.changed': '将更新的配置',
-        'title': 'WSL 远程连接',
-        'description': '每个 WSL 发行版都是一台远程主机（与 Codex 相同）：连接后在 WSL 中启动你自己安装的 dsh，使用 WSL 的 ~/.dsh、模型、插件和原生 Linux 文件。它的工作区和会话直接显示在这个窗口里，与 Windows 会话并列，无需重启。',
-        'loading': '正在检测 WSL…',
+        'title': '远程主机连接',
+        'description': '连接 SSH 服务器或 WSL 发行版，使用远程主机上你自己安装的 dsh、模型、插件和文件。远程工作区和会话与本机会话显示在同一个窗口里。macOS 支持 SSH，Windows 支持 SSH 和 WSL。',
+        'loading': '正在加载远程主机…',
         'none': '未检测到可用的 WSL 2 发行版。',
         'discoveryError': '检测 WSL 发行版失败，正在自动重试：{message}',
-        'notWindows': '仅在 Windows 上可用。',
+        'notWindows': 'macOS 支持 SSH 远程主机；WSL 仅在 Windows 上可用。',
         'residentHere': '这个 dsh 运行在 Linux 上，已安装本插件：Windows 上的 DeepSeek Harness 连接这台主机时，会直接连到这个正在运行的 dsh（通过只有当前用户可访问的本地 socket），不再另起一个；两边的工作区和会话是同一份。',
         'default': '默认',
         'state.disconnected': '未连接',
@@ -78,8 +78,8 @@ window.__ModuleLoader__.load({
         'profile.description': '连接时启动的 dsh profile（位于 WSL 的 ~/.dsh/profiles）。修改后对新连接生效。',
         'reconnect': '已有连接仍使用旧设置，断开后重新连接即可生效。',
         'migrated': '旧的「运行环境」模式已停用：本机会话恢复为 Windows 执行，WSL 改为在下方单独连接。',
-        'req.dsh-missing': '{distro} 中未找到 dsh。请在 WSL 终端中依次运行以下命令安装，然后点「重试」：',
-        'req.dsh-outdated': '{distro} 中的 dsh {found} 低于所需的 {minimum}。请在 WSL 终端中运行以下命令更新，然后点「重试」：',
+        'req.dsh-missing': '{distro} 中未找到 dsh。请在远程主机上依次运行以下命令安装，然后点「重试」：',
+        'req.dsh-outdated': '{distro} 中的 dsh {found} 低于所需的 {minimum}。请在远程主机上运行以下命令更新，然后点「重试」：',
         'req.note.nvm': '安装 nvm（Node.js 版本管理器，装在主目录，无需 sudo）；装完后重新打开终端',
         'req.note.node': '安装 Node.js LTS',
         'req.note.node-after-nvm': '重新打开终端后，安装 Node.js LTS',
@@ -195,7 +195,7 @@ window.__ModuleLoader__.load({
         'plugins.installed': '已安装 {name}。',
         'plugins.cancelled': '已取消安装，WSL 的配置已还原。',
         'ssh.title': 'SSH 远程主机',
-        'ssh.description': '用法与 WSL 相同：连接后在服务器上启动你自己安装的 dsh（npm i -g @deepseek-ai/dsh），它的工作区和会话显示在这个窗口里。通过 Windows 自带的 OpenSSH 连接，使用 ~/.ssh/config 和你的密钥；服务器无需开放额外端口。',
+        'ssh.description': '用法与 WSL 相同：连接后在服务器上启动你自己安装的 dsh（npm i -g @deepseek-ai/dsh），它的工作区和会话显示在这个窗口里。通过本机的 OpenSSH 连接，使用 ~/.ssh/config 和你的密钥；服务器无需开放额外端口。',
         'ssh.placeholder': 'user@host、host:端口 或 ~/.ssh/config 中的 Host',
         'ssh.add': '添加',
         'ssh.remove': '移除',
@@ -203,9 +203,9 @@ window.__ModuleLoader__.load({
         'ssh.fromConfig': '来自 ~/.ssh/config：',
         'ssh.none': '尚未添加 SSH 主机。',
         'ssh.hint.auth': 'SSH 认证失败。连接以非交互方式进行，不能输入密码：请配置密钥登录（ssh-copy-id，或把公钥加入服务器的 ~/.ssh/authorized_keys），必要时先运行 ssh-add。',
-        'ssh.hint.host-key': '主机密钥未被信任或已变化。请先在 PowerShell 中运行 ssh {dest} 确认主机密钥，然后点「重试」。',
+        'ssh.hint.host-key': '主机密钥未被信任或已变化。请先在本机终端中运行 ssh {dest} 确认主机密钥，然后点「重试」。',
         'ssh.hint.network': '无法连接到服务器，请检查地址、端口和网络。',
-        'req.terminalSsh': '在 Windows 终端中运行 ssh {dest} 登录服务器后执行以上命令',
+        'req.terminalSsh': '在本机终端中运行 ssh {dest} 登录服务器后执行以上命令',
         'ws.ssh': 'SSH',
         'ws.sshDesc': '在 SSH 远程主机上选择文件夹',
         'ws.sshNone': '请先在 设置 → 通用 中添加 SSH 主机',
@@ -305,12 +305,12 @@ window.__ModuleLoader__.load({
         'models.done': 'Model configuration synced.',
         'models.partial': 'Sync did not finish. Completed writes were kept. Refresh the preview before retrying.',
         'models.changed': 'Configuration to update',
-        'title': 'WSL remote connections',
-        'description': 'Each WSL distribution is a remote host (as in Codex): connecting starts your own dsh inside WSL, with the WSL ~/.dsh, models, plugins and native Linux files. Its workspaces and sessions appear right in this window, beside the Windows ones. No restart needed.',
-        'loading': 'Detecting WSL…',
+        'title': 'Remote host connections',
+        'description': 'Connect to SSH servers or WSL distributions using their own dsh, models, plugins and files. Remote workspaces and sessions appear beside local ones in this window. macOS supports SSH; Windows supports SSH and WSL.',
+        'loading': 'Loading remote hosts…',
         'none': 'No WSL 2 distribution found.',
         'discoveryError': 'Could not list WSL distributions; retrying automatically: {message}',
-        'notWindows': 'Available on Windows only.',
+        'notWindows': 'macOS supports SSH remote hosts; WSL is available on Windows only.',
         'residentHere': 'This dsh runs on Linux with this plugin installed: when DeepSeek Harness on Windows connects to this host, it joins this running dsh (through a local socket only this user can reach) instead of starting another, so both sides share one set of workspaces and sessions.',
         'default': 'default',
         'state.disconnected': 'Not connected',
@@ -334,8 +334,8 @@ window.__ModuleLoader__.load({
         'profile.description': 'The dsh profile started on connect (under ~/.dsh/profiles in WSL). Applies to new connections.',
         'reconnect': 'Existing connections keep their settings until you disconnect and connect again.',
         'migrated': 'The old "execution environment" mode is retired: sessions here run on Windows again, and WSL connects separately below.',
-        'req.dsh-missing': 'dsh was not found in {distro}. Run these commands in a WSL terminal, then select Retry:',
-        'req.dsh-outdated': 'dsh {found} in {distro} is older than the required {minimum}. Run these commands in a WSL terminal, then select Retry:',
+        'req.dsh-missing': 'dsh was not found in {distro}. Run these commands on the remote host, then select Retry:',
+        'req.dsh-outdated': 'dsh {found} in {distro} is older than the required {minimum}. Run these commands on the remote host, then select Retry:',
         'req.note.nvm': 'Install nvm (Node.js version manager; installs in your home directory, no sudo), then reopen the terminal',
         'req.note.node': 'Install Node.js LTS',
         'req.note.node-after-nvm': 'After reopening the terminal, install Node.js LTS',
@@ -451,7 +451,7 @@ window.__ModuleLoader__.load({
         'plugins.installed': 'Installed {name}.',
         'plugins.cancelled': 'Install cancelled; the WSL profile was restored.',
         'ssh.title': 'SSH remote hosts',
-        'ssh.description': 'Used exactly like WSL: connecting starts your own dsh on the server (npm i -g @deepseek-ai/dsh), and its workspaces and sessions appear in this window. Connects with Windows’ OpenSSH, using ~/.ssh/config and your keys; the server opens no extra port.',
+        'ssh.description': 'Used exactly like WSL: connecting starts your own dsh on the server (npm i -g @deepseek-ai/dsh), and its workspaces and sessions appear in this window. Connects with the local OpenSSH client, using ~/.ssh/config and your keys; the server opens no extra port.',
         'ssh.placeholder': 'user@host, host:port or a Host from ~/.ssh/config',
         'ssh.add': 'Add',
         'ssh.remove': 'Remove',
@@ -459,9 +459,9 @@ window.__ModuleLoader__.load({
         'ssh.fromConfig': 'From ~/.ssh/config:',
         'ssh.none': 'No SSH hosts added yet.',
         'ssh.hint.auth': 'SSH authentication failed. The connection is non-interactive and cannot ask for a password: set up key-based login (ssh-copy-id, or add your public key to ~/.ssh/authorized_keys on the server), and run ssh-add if your key has a passphrase.',
-        'ssh.hint.host-key': 'The host key is not trusted or has changed. Run ssh {dest} in PowerShell once to confirm it, then select Retry.',
+        'ssh.hint.host-key': 'The host key is not trusted or has changed. Run ssh {dest} in your local terminal once to confirm it, then select Retry.',
         'ssh.hint.network': 'The server could not be reached. Check the address, port and network.',
-        'req.terminalSsh': 'Run ssh {dest} in a Windows terminal and enter these commands on the server',
+        'req.terminalSsh': 'Run ssh {dest} in your local terminal and enter these commands on the server',
         'ws.ssh': 'SSH',
         'ws.sshDesc': 'Choose a folder on an SSH remote host',
         'ws.sshNone': 'Add an SSH host in Settings → General first',
@@ -1022,7 +1022,9 @@ window.__ModuleLoader__.load({
       // Set when the Host answers that this page belongs to a dsh on Linux (resident agent host):
       // there are no WSL/SSH hosts to route to, and Linux paths are this dsh's own.
       let residentHost = false;
+      let localPlatform;
       call('api/local-wsl-remote/connections').then((status) => {
+        localPlatform = status?.platform;
         residentHost = status?.resident === true;
       }, () => {});
       const distros = (() => {
@@ -1070,7 +1072,8 @@ window.__ModuleLoader__.load({
         const workspace = items.find((item) => item.sessionIds.includes(sessionId));
         if (workspace !== undefined && state.workspaces[workspace.workspaceId] !== undefined) return state.workspaces[workspace.workspaceId];
         const cwd = ctx.get('sessions')?.list?.getSnapshot?.().byId?.[sessionId]?.cwd ?? workspace?.path;
-        if (!isLinuxPath(cwd)) return undefined;
+        // POSIX paths are local on macOS too; only Windows can infer remoteness from them.
+        if (localPlatform !== 'win32' || !isLinuxPath(cwd)) return undefined;
         const connected = state.distros.filter((entry) => entry.state === 'connected').map((entry) => entry.name);
         return connected.length === 1 ? connected[0] : undefined;
       };
@@ -1080,6 +1083,7 @@ window.__ModuleLoader__.load({
         // dsh's own, with a Linux path; nothing is remote from this page, so leave the picker as shipped.
         if (residentHost) return false;
         if (hostOfSession(sessionId) !== undefined) return true;
+        if (localPlatform !== 'win32') return false;
         // With no WSL/SSH host configured at all, a Linux path cannot be remote (a dsh on Linux,
         // or a Windows window with no remote hosts): this also covers the moment before `residentHost` is known.
         const known = distros.getSnapshot();

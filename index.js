@@ -132,7 +132,7 @@ export default class WslRemoteService extends Service {
     // Installed in a dsh on Linux (a WSL distribution or a server): no Windows
     // Host here, only the agent a Windows window connects to, on this user's
     // Unix socket, so it reaches this running dsh instead of starting another.
-    if (process.platform !== 'win32') {
+    if (process.platform !== 'win32' && process.platform !== 'darwin') {
       this.resident = true;
       this.settings = { sshHosts: [], autoConnect: [], workspaceOrder: [] };
       this.connections = new Map();

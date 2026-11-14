@@ -2,7 +2,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Bring WSL and SSH remote hosts to DeepSeek Harness, the way the Codex desktop app supports them. **Install it once, on Windows** (and, only if a host already runs a dsh of its own, there too: see [Joining a dsh that is already running](#joining-a-dsh-that-is-already-running)). Each WSL distribution and each SSH server is a remote host running your own `dsh`, installed with `npm i -g @deepseek-ai/dsh`, and its workspaces and sessions are merged into the Windows window.
+Bring WSL and SSH remote hosts to DeepSeek Harness, the way the Codex desktop app supports them. **Install it on Windows or macOS** (and, only if a host already runs a dsh of its own, there too: see [Joining a dsh that is already running](#joining-a-dsh-that-is-already-running)). Each WSL distribution and each SSH server is a remote host running your own `dsh`, installed with `npm i -g @deepseek-ai/dsh`, and its workspaces and sessions are merged into the local window.
 
 - **WSL workspaces**: choose "WSL" when adding a workspace and pick a folder in the Linux file system. Sessions in that workspace run in your own `dsh` inside WSL, with WSL's `~/.dsh` profile, models and plugins; commands, file edits and searches run in Linux under the sandbox you configured there. The session list, chat view, history, live output, questions and approvals are all in the same Windows window, beside the Windows sessions.
 - **SSH remote hosts**: used exactly like WSL. Add `user@host`, `host:port` or a `Host` from `~/.ssh/config` under Settings → General → **SSH remote hosts**; once connected, the workspaces and sessions of your own `dsh` on the server are merged into this window the same way, and "Add workspace" offers **SSH**. See [SSH remote hosts](#ssh-remote-hosts).
@@ -78,9 +78,9 @@ bash -lc 'dsh --version'   # 0.2.1-rc.5 or newer; this plugin runs on DeepSeek H
 
 When dsh is missing or too old, the Settings page shows the install commands to copy; see below.
 
-### 2. Install the plugin on Windows
+### 2. Install the plugin on Windows or macOS
 
-Run these commands in PowerShell. The `dsh` command ships with DeepSeek Harness Desktop.
+Run these commands in PowerShell on Windows or Terminal on macOS. The `dsh` command ships with DeepSeek Harness Desktop.
 
 ```powershell
 git clone https://github.com/hasagiiii/dsh-wsl-remote.git
@@ -92,7 +92,7 @@ dsh plugin --profile desktop add .
 
 pnpm may warn that a linked package does not resolve its peer dependencies (`@deepseek-ai/cordis` and others) from the profile. Ignore the warning: DeepSeek Harness provides them when it loads the plugin. Do not switch to `file:` as suggested; that installs a copy, and later `git pull` updates would not take effect.
 
-**Do not install this plugin into the dsh in WSL or on an SSH server.** It is made for the Windows Host only.
+**macOS can connect to SSH hosts; Windows supports SSH and WSL.** On macOS, install this repository from the Plugins page, then add a host under Settings → General → SSH remote hosts. Connections use local OpenSSH and `~/.ssh/config`. On Linux, the plugin acts as a resident connection target; see “Joining a dsh that is already running” below.
 
 ### 3. Enable
 

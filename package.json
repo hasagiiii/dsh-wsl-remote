@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-wsl-remote",
-  "version": "4.4.1",
+  "version": "4.4.2",
   "private": true,
   "type": "module",
   "description": "WSL and SSH remote hosts for DeepSeek Harness, like the Codex desktop app: each WSL distribution or SSH server runs your own dsh (its ~/.dsh, models, plugins and Linux files), and its workspaces and sessions appear in the Windows window beside the Windows ones.",
