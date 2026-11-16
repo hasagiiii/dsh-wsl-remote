@@ -15,12 +15,14 @@ function fixture(platform, host = 'ssh:dev') {
   bridge.sessionHosts.set('local-session', WINDOWS);
   bridge.sessionHosts.set('remote-session', host);
   const requests = [];
-  bridge.client = async (owner) => ({ fetch: async (path) => { requests.push({ owner, path }); return 'remote'; } });
-  const fetchFile = (path, sessionId) => {
+  // A real Response, as HostClient.fetch returns (the relay decodes it before handing it on).
+  bridge.client = async (owner) => ({ fetch: async (path) => { requests.push({ owner, path }); return new Response('remote'); } });
+  const fetchFile = async (path, sessionId) => {
     const url = new URL('http://localhost/api/file');
     url.searchParams.set('path', path);
     if (sessionId) url.searchParams.set('sessionId', sessionId);
-    return bridge.fetchRoute('/api/file', new Request(url), async () => 'local');
+    const answer = await bridge.fetchRoute('/api/file', new Request(url), async () => 'local');
+    return typeof answer === 'string' ? answer : answer.text();
   };
   return { bridge, fetchFile, requests };
 }
