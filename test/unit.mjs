@@ -234,6 +234,42 @@ await test('routes: which WSL session a plugin request names', () => {
   assert.deepEqual(requestSessionHints(new URL('http://x/sidebar/bundle/client-editor.js')), [], 'shared assets name no session');
 });
 
+await test('bridge: a gzipped WSL Fetch-route answer reaches Windows decoded and without encoding headers', async () => {
+  const { WslBridge } = await import('../lib/bridge/bridge.js');
+  const { createServer } = await import('node:http');
+  const { gzipSync } = await import('node:zlib');
+  const payload = JSON.stringify({ ok: true, value: 'x'.repeat(4000) });
+  const asked = [];
+  const server = createServer((req, res) => {
+    asked.push(req.headers['accept-encoding']);
+    // Gzip regardless of the request, as a route that compresses its own answer would.
+    const body = gzipSync(payload);
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-encoding': 'gzip', 'content-length': body.length });
+    res.end(body);
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}/`;
+    const bridge = new WslBridge({
+      logger: { info() {}, warn() {} },
+      hosts: { distros: () => ['Ubuntu'], connected: () => true, url: () => 'u', ensure: async () => {}, subscribe: () => () => {}, loadOrder: () => [], saveOrder() {} },
+      windows: { knows: async () => false, workspaces: () => ({ items: [], archivedSessionIds: [], pinnedSessionIds: [] }) },
+    });
+    bridge.ownerOf = async () => 'Ubuntu';
+    bridge.client = async () => ({ fetch: (path, init) => fetch(new URL(path, base), init) });
+    const request = new Request('http://win/api/plugin/op?sessionId=s1', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    const response = await bridge.fetchRoute('/api/plugin/op', request, () => { throw new Error('sent to Windows'); });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-encoding'), null);
+    assert.equal(response.headers.get('content-length'), null, 'the compressed length would truncate the decoded body');
+    assert.equal(response.headers.get('content-type'), 'application/json; charset=utf-8');
+    assert.equal(await response.text(), payload);
+    assert.deepEqual(asked, ['identity'], 'the WSL dsh is asked not to compress');
+  } finally {
+    server.close();
+  }
+});
+
 await test('bridge: a WSL workspace just added is routable before its follow stream echoes it', async () => {
   const { WslBridge } = await import('../lib/bridge/bridge.js');
   const calls = [];
