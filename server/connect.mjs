@@ -23,6 +23,14 @@ socket.once('connect', () => {
   process.stdout.write('\n__DSH_REMOTE_MUX_V1__\n');
   socket.pipe(process.stdout);
   process.stdin.pipe(socket);
-  process.stdin.on('end', () => socket.end());
+  // Windows going away ends stdin (EOF) or closes it; the agent only half-closes in turn,
+  // so do not wait for its answer: end this bridge, which is the whole join.
+  const leave = () => {
+    socket.destroy();
+    process.exit(0);
+  };
+  process.stdin.on('end', leave);
+  process.stdin.on('close', leave);
+  process.stdout.on('error', leave); // the SSH/WSL side is gone
   socket.on('close', () => process.exit(0));
 });

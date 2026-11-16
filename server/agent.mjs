@@ -116,10 +116,12 @@ export function serveResident(ctx, { path = residentSocketPath(), url, shareLogi
     }
     await rm(path, { force: true });
     if (closed) return;
-    server = createServer((socket) => {
+    server = createServer({ allowHalfOpen: false }, (socket) => {
       live.add(socket);
       socket.on('close', () => live.delete(socket));
       socket.on('error', () => {});
+      // A window that leaves half-closes (EOF): end this connection fully, so its bridge exits too.
+      socket.on('end', () => socket.destroy());
       serve(ctx, socket, socket, {
         shareLogin,
         resident: true,
